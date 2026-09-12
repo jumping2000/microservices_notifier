@@ -10,9 +10,11 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Callable, Iterator
 
 import pytest
+import redis.asyncio as aioredis
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 from testcontainers.community.postgres import PostgresContainer
+from testcontainers.community.redis import RedisContainer
 
 
 @pytest.fixture(scope="session")
@@ -49,3 +51,19 @@ async def make_schema(engine: AsyncEngine) -> AsyncIterator[Callable]:
     for metadata in reversed(created):
         async with engine.begin() as conn:
             await conn.run_sync(metadata.drop_all)
+
+
+@pytest.fixture(scope="session")
+def redis_url() -> Iterator[str]:
+    with RedisContainer("redis:7-alpine") as container:
+        host = container.get_container_host_ip()
+        port = container.get_exposed_port(6379)
+        yield f"redis://{host}:{port}/0"
+
+
+@pytest.fixture
+async def redis_client(redis_url: str) -> AsyncIterator[aioredis.Redis]:
+    client = aioredis.from_url(redis_url)
+    await client.flushall()
+    yield client
+    await client.aclose()
