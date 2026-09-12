@@ -4761,7 +4761,37 @@ class EmailDelivery(Base, TimestampMixin):
     )
 ```
 
-- [ ] **Step 4: Implement the consumer**
+- [ ] **Step 4: Implement the delivery repository**
+
+`app/repositories/email_delivery.py`:
+```python
+from uuid import UUID
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.email_delivery import EmailDelivery
+
+
+class EmailDeliveryRepository:
+    async def add(self, session: AsyncSession, delivery: EmailDelivery) -> None:
+        session.add(delivery)
+
+    async def get_by_notification(
+        self, session: AsyncSession, notification_id: UUID
+    ) -> EmailDelivery | None:
+        return await session.scalar(
+            select(EmailDelivery).where(EmailDelivery.notification_id == notification_id)
+        )
+```
+
+Every aggregate in this project gets a repository, even one this thin: Routing
+Service has `RouteRepository` and Notification Service has
+`NotificationRepository`. Without one here, the first piece of work that needs
+to *query* `email_delivery` has nowhere to put the statement except the worker,
+which would break the layering rule outright.
+
+- [ ] **Step 5: Implement the consumer**
 
 `app/workers/routed_consumer.py`:
 ```python
@@ -4795,6 +4825,7 @@ from notification_shared.streams import RedisStreamConsumer
 from app.models.email_delivery import DeliveryStatus, EmailDelivery
 from app.models.outbox import Outbox
 from app.models.processed_event import ProcessedEvent
+from app.repositories.email_delivery import EmailDeliveryRepository
 
 logger = logging.getLogger(__name__)
 
@@ -4815,6 +4846,7 @@ class RoutedConsumer:
     ) -> None:
         self._session_factory = session_factory
         self._consumer = RedisStreamConsumer(redis, consumer_name)
+        self._deliveries = EmailDeliveryRepository()
         self._outbox = OutboxRepository(Outbox)
         self._idempotency = IdempotencyRepository(ProcessedEvent)
         self._poll_interval_ms = poll_interval_ms
@@ -4884,7 +4916,7 @@ class RoutedConsumer:
                 fail_reason=fail_reason,
                 sent_at=delivered_at,
             )
-            session.add(delivery)
+            await self._deliveries.add(session, delivery)
             await session.flush()
 
             if fail_reason is None:
@@ -4938,11 +4970,11 @@ class RoutedConsumer:
         return None
 ```
 
-- [ ] **Step 5: Implement `main.py` and Alembic**
+- [ ] **Step 9: Implement `main.py` and Alembic**
 
 `create_app` follows Task 12's shape: `system.router` only, lifespan starting `RoutedConsumer.run_forever()` and `OutboxPublisher.run_forever()`, with `await consumer.ensure_groups()` before either task starts. Alembic follows Task 12, importing `app.models.email_delivery`, `app.models.outbox`, `app.models.processed_event`; autogenerate `0001_create_email_tables.py` and confirm `email_delivery` carries `uq_email_delivery_notification_id`.
 
-- [ ] **Step 6: Run the tests to verify they pass**
+- [ ] **Step 9: Run the tests to verify they pass**
 
 Run: `PYTHONPATH=services/email-service uv run pytest services/email-service/tests -v`
 Expected: PASS, 9 tests
