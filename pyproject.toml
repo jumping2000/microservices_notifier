@@ -1,0 +1,32 @@
+[project]
+name = "notification-platform"
+version = "1.0.0"
+description = "Universal Notification Platform - microservices demo"
+requires-python = ">=3.14"
+dependencies = []
+
+[tool.uv.workspace]
+members = ["services/*", "shared"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "testcontainers>=4.15.0",
+    "ruff>=0.16.7",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+markers = [
+    "integration: requires Docker (testcontainers)",
+    "e2e: requires the full docker compose stack",
+]
