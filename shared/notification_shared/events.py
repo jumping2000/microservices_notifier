@@ -11,7 +11,7 @@ from enum import StrEnum
 from typing import Any, Self
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class Channel(StrEnum):
@@ -52,6 +52,8 @@ class EventEnvelope(BaseModel):
     `aggregate_id` is always the notification_id, so the whole saga correlates
     on one identifier.
     """
+
+    model_config = ConfigDict(frozen=True)
 
     event_id: UUID
     event_type: EventType

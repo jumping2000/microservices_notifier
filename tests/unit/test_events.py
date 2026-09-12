@@ -93,3 +93,14 @@ def test_nested_payload_values_survive_serialization():
     decoded = json.loads(envelope.to_redis()["envelope"])
     assert decoded["payload"]["attempt"] == 1
     assert decoded["event_version"] == 1
+
+
+def test_an_envelope_cannot_be_mutated_after_construction():
+    envelope = EventEnvelope.new(
+        event_type=EventType.NOTIFICATION_CREATED,
+        aggregate_id=uuid4(),
+        payload={"channel": "email"},
+        correlation_id="corr-frozen",
+    )
+    with pytest.raises(ValidationError):
+        envelope.event_type = EventType.DELIVERY_COMPLETED
