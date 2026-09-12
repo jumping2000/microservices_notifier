@@ -1,6 +1,5 @@
 import httpx
 from fastapi import FastAPI, Request
-
 from notification_shared.context import get_correlation_id
 from notification_shared.middleware import CORRELATION_ID_HEADER, CorrelationIDMiddleware
 
