@@ -1,9 +1,8 @@
-from fastapi import APIRouter, Depends
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.core.database import get_db
 from app.schemas.channel import ChannelRead, ChannelUpdate
 from app.services.channel import ChannelService
+from fastapi import APIRouter, Depends
+from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(tags=["channels"])
 service = ChannelService()

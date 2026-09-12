@@ -1,12 +1,11 @@
 import asyncio
 import os
 
-from sqlalchemy import pool
-from sqlalchemy.ext.asyncio import async_engine_from_config
-
 import app.models.channel  # noqa: F401  register the table on the metadata
 from alembic import context
 from app.models.base import Base
+from sqlalchemy import pool
+from sqlalchemy.ext.asyncio import async_engine_from_config
 
 config = context.config
 if not config.get_main_option("sqlalchemy.url", None):

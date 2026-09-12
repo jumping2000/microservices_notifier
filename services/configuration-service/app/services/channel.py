@@ -1,8 +1,7 @@
-from notification_shared.exceptions import NotFoundError
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.repositories.channel import ChannelRepository
 from app.schemas.channel import ChannelRead
+from notification_shared.exceptions import NotFoundError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class ChannelService:

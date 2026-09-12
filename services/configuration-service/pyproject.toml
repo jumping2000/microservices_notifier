@@ -21,11 +21,3 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["app"]
-
-[tool.ruff]
-extend = "../../pyproject.toml"
-
-[tool.ruff.lint.flake8-bugbear]
-# FastAPI's dependency-injection idiom calls Depends() as an argument default
-# by design; ruff's bugbear check does not exempt it by default.
-extend-immutable-calls = ["fastapi.Depends"]

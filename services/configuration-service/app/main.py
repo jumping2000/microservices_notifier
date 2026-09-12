@@ -8,16 +8,15 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
+from app.api.v1.router import router
+from app.core.config import Settings
+from app.core.database import Database
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from notification_shared.exceptions import ServiceError
 from notification_shared.logging import configure_logging
 from notification_shared.middleware import CorrelationIDMiddleware
 from starlette.requests import Request
-
-from app.api.v1.router import router
-from app.core.config import Settings
-from app.core.database import Database
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:

@@ -1,9 +1,8 @@
 from collections.abc import Sequence
 
+from app.models.channel import ChannelConfig
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-
-from app.models.channel import ChannelConfig
 
 
 class ChannelRepository:

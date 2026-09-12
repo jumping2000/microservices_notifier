@@ -24,6 +24,13 @@ target-version = "py314"
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "ASYNC"]
 
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's dependency injection calls Depends() as an argument default by
+# design, which bugbear's B008 flags. Exempting the call is narrower than
+# ignoring B008 outright, and it belongs here rather than in each service's
+# manifest so there is one copy instead of four.
+extend-immutable-calls = ["fastapi.Depends"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]

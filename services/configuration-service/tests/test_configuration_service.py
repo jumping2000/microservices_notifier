@@ -1,14 +1,13 @@
 import httpx
 import pytest
-from alembic.config import Config
-from sqlalchemy import select
-
 from alembic import command
+from alembic.config import Config
 from app.core.config import Settings
 from app.core.database import Database
 from app.main import create_app
 from app.models.base import Base
 from app.models.channel import ChannelConfig
+from sqlalchemy import select
 
 pytestmark = pytest.mark.integration
 

@@ -5,7 +5,6 @@ before Uvicorn, and covered by the alembic integration test. See spec 3.9.
 """
 
 import sqlalchemy as sa
-
 from alembic import op
 
 revision = "0001"
