@@ -159,6 +159,13 @@ target-version = "py314"
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "ASYNC"]
 
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's dependency injection calls Depends() as an argument default by
+# design, which bugbear's B008 flags. Exempting the call is narrower than
+# ignoring B008 outright, and it belongs here rather than in each service's
+# manifest so there is one copy instead of four.
+extend-immutable-calls = ["fastapi.Depends"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
@@ -2409,6 +2416,11 @@ build-backend = "hatchling.build"
 packages = ["app"]
 ```
 
+Do **not** add a `[tool.ruff]` section to a service manifest. Ruff applies the
+nearest ancestor configuration, and every ruff invocation in this project runs
+from the repository root, so the root `[tool.ruff]` already governs these
+files. A per-service block would mean four copies drifting apart.
+
 Then run `uv sync --all-packages` and confirm the new member resolves.
 
 - [ ] **Step 2: Write the failing tests**
@@ -2873,6 +2885,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 [alembic]
 script_location = alembic
 prepend_sys_path = .
+# Required by Alembic 1.20+: without it, every alembic command emits
+# "No path_separator found in configuration" as a DeprecationWarning, and the
+# integration test that runs `upgrade head` would not have pristine output.
+path_separator = os
 
 [loggers]
 keys = root
