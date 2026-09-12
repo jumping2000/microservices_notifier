@@ -1812,7 +1812,6 @@ This is the only worker loop in the shared library, because it is identical in e
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import select
 from sqlalchemy.orm import DeclarativeBase
 
 from notification_shared.events import EventEnvelope, EventType, Stream
