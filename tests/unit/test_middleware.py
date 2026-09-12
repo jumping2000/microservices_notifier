@@ -1,5 +1,6 @@
+import httpx
 from fastapi import FastAPI, Request
-from fastapi.testclient import TestClient
+
 from notification_shared.context import get_correlation_id
 from notification_shared.middleware import CORRELATION_ID_HEADER, CorrelationIDMiddleware
 
@@ -21,28 +22,34 @@ def _app() -> FastAPI:
     return app
 
 
-def test_an_absent_header_is_generated():
-    with TestClient(_app()) as client:
-        response = client.get("/probe")
+def _client() -> httpx.AsyncClient:
+    return httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=_app()), base_url="http://test"
+    )
+
+
+async def test_an_absent_header_is_generated():
+    async with _client() as client:
+        response = await client.get("/probe")
     assert response.status_code == 200
     assert len(response.headers[CORRELATION_ID_HEADER]) == 36
 
 
-def test_a_supplied_header_is_preserved_and_echoed():
-    with TestClient(_app()) as client:
-        response = client.get("/probe", headers={CORRELATION_ID_HEADER: "corr-supplied"})
+async def test_a_supplied_header_is_preserved_and_echoed():
+    async with _client() as client:
+        response = await client.get("/probe", headers={CORRELATION_ID_HEADER: "corr-supplied"})
     assert response.headers[CORRELATION_ID_HEADER] == "corr-supplied"
     assert response.json()["from_state"] == "corr-supplied"
 
 
-def test_the_context_var_is_set_for_the_duration_of_the_request():
-    with TestClient(_app()) as client:
-        response = client.get("/probe", headers={CORRELATION_ID_HEADER: "corr-ctx"})
+async def test_the_context_var_is_set_for_the_duration_of_the_request():
+    async with _client() as client:
+        response = await client.get("/probe", headers={CORRELATION_ID_HEADER: "corr-ctx"})
     assert response.json()["from_context"] == "corr-ctx"
 
 
-def test_two_requests_get_different_generated_ids():
-    with TestClient(_app()) as client:
-        first = client.get("/probe").headers[CORRELATION_ID_HEADER]
-        second = client.get("/probe").headers[CORRELATION_ID_HEADER]
+async def test_two_requests_get_different_generated_ids():
+    async with _client() as client:
+        first = (await client.get("/probe")).headers[CORRELATION_ID_HEADER]
+        second = (await client.get("/probe")).headers[CORRELATION_ID_HEADER]
     assert first != second
