@@ -16,6 +16,7 @@ from uuid import uuid4
 from app.models.email_delivery import DeliveryStatus, EmailDelivery
 from app.models.outbox import Outbox
 from app.models.processed_event import ProcessedEvent
+from app.repositories.email_delivery import EmailDeliveryRepository
 from notification_shared.context import set_correlation_id
 from notification_shared.events import (
     Channel,
@@ -47,6 +48,7 @@ class RoutedConsumer:
     ) -> None:
         self._session_factory = session_factory
         self._consumer = RedisStreamConsumer(redis, consumer_name)
+        self._deliveries = EmailDeliveryRepository()
         self._outbox = OutboxRepository(Outbox)
         self._idempotency = IdempotencyRepository(ProcessedEvent)
         self._poll_interval_ms = poll_interval_ms
@@ -116,7 +118,7 @@ class RoutedConsumer:
                 fail_reason=fail_reason,
                 sent_at=delivered_at,
             )
-            session.add(delivery)
+            await self._deliveries.add(session, delivery)
             await session.flush()
 
             if fail_reason is None:
