@@ -2058,9 +2058,18 @@ git commit -m "feat(shared): add outbox publisher worker"
 - [ ] **Step 1: Write the failing tests**
 
 `tests/unit/test_middleware.py`:
+
+Driven through `httpx.ASGITransport` rather than `fastapi.testclient.TestClient`.
+Two reasons: `TestClient` on starlette 1.x emits a `StarletteDeprecationWarning`
+about httpx plus an anyio alias deprecation, and test output must be pristine;
+and every service test from Task 10 onward already drives its app through
+`ASGITransport`, so this keeps one pattern across the suite. Middleware runs
+under `ASGITransport` — it is part of the app's ASGI stack. (Only `lifespan`
+does not run, which this test does not need.)
+
 ```python
+import httpx
 from fastapi import FastAPI, Request
-from fastapi.testclient import TestClient
 
 from notification_shared.context import get_correlation_id
 from notification_shared.middleware import CORRELATION_ID_HEADER, CorrelationIDMiddleware
@@ -2083,32 +2092,47 @@ def _app() -> FastAPI:
     return app
 
 
-def test_an_absent_header_is_generated():
-    with TestClient(_app()) as client:
-        response = client.get("/probe")
+def _client() -> httpx.AsyncClient:
+    return httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=_app()), base_url="http://test"
+    )
+
+
+async def test_an_absent_header_is_generated():
+    async with _client() as client:
+        response = await client.get("/probe")
     assert response.status_code == 200
     assert len(response.headers[CORRELATION_ID_HEADER]) == 36
 
 
-def test_a_supplied_header_is_preserved_and_echoed():
-    with TestClient(_app()) as client:
-        response = client.get("/probe", headers={CORRELATION_ID_HEADER: "corr-supplied"})
+async def test_a_supplied_header_is_preserved_and_echoed():
+    async with _client() as client:
+        response = await client.get("/probe", headers={CORRELATION_ID_HEADER: "corr-supplied"})
     assert response.headers[CORRELATION_ID_HEADER] == "corr-supplied"
     assert response.json()["from_state"] == "corr-supplied"
 
 
-def test_the_context_var_is_set_for_the_duration_of_the_request():
-    with TestClient(_app()) as client:
-        response = client.get("/probe", headers={CORRELATION_ID_HEADER: "corr-ctx"})
+async def test_the_context_var_is_set_for_the_duration_of_the_request():
+    async with _client() as client:
+        response = await client.get("/probe", headers={CORRELATION_ID_HEADER: "corr-ctx"})
     assert response.json()["from_context"] == "corr-ctx"
 
 
-def test_two_requests_get_different_generated_ids():
-    with TestClient(_app()) as client:
-        first = client.get("/probe").headers[CORRELATION_ID_HEADER]
-        second = client.get("/probe").headers[CORRELATION_ID_HEADER]
+async def test_two_requests_get_different_generated_ids():
+    async with _client() as client:
+        first = (await client.get("/probe")).headers[CORRELATION_ID_HEADER]
+        second = (await client.get("/probe")).headers[CORRELATION_ID_HEADER]
     assert first != second
 ```
+
+**Dependency placement.** These tests import `fastapi`, but
+`shared/notification_shared/middleware.py` imports only `starlette`. So
+`fastapi` belongs in the **root `[dependency-groups] dev`** list pinned
+`fastapi>=0.141.1`, not in `shared/pyproject.toml`'s runtime dependencies —
+the shared library does not depend on FastAPI, only its test does. Do not add
+`notification-shared` to the root dev group either: `uv sync --all-packages`
+already installs every workspace member into the root `.venv`, which is how
+Tasks 2 through 8 imported it.
 
 `tests/unit/test_http_client.py`:
 ```python
