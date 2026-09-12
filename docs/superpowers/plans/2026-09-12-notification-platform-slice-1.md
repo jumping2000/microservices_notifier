@@ -1153,21 +1153,31 @@ async def test_a_rolled_back_transaction_leaves_no_outbox_row(sessions):
 
 
 async def test_get_pending_returns_only_unpublished_rows_oldest_first(sessions):
+    """One transaction per row on purpose.
+
+    `created_at` defaults to `func.now()`, which in Postgres is the
+    *transaction* start time — three rows saved in one transaction would share
+    a timestamp and the ORDER BY could not be asserted at all.
+    """
     repo = OutboxRepository(Outbox)
-    async with sessions() as session:
-        for _ in range(3):
+    saved_ids = []
+    for _ in range(3):
+        async with sessions() as session:
             await repo.save(session, Stream.NOTIFICATION_CREATED, _envelope())
-        await session.commit()
+            await session.commit()
+        async with sessions() as session:
+            newest = (await repo.get_pending(session))[-1]
+            saved_ids.append(newest.id)
 
     async with sessions() as session:
         pending = await repo.get_pending(session)
-        assert len(pending) == 3
+        assert [row.id for row in pending] == saved_ids, "not returned oldest-first"
         await repo.mark_published(session, [pending[0].id])
         await session.commit()
 
     async with sessions() as session:
         remaining = await repo.get_pending(session)
-        assert len(remaining) == 2
+        assert [row.id for row in remaining] == saved_ids[1:]
         assert all(row.published is False for row in remaining)
 
 
@@ -1183,10 +1193,23 @@ async def test_get_pending_respects_the_limit(sessions):
 
 
 async def test_mark_published_with_an_empty_list_is_a_no_op(sessions):
+    """Must distinguish a guarded no-op from an unguarded one.
+
+    Asserting only that the call does not raise proves nothing: an empty
+    `IN ()` compiles to an always-false predicate, so an unguarded UPDATE
+    would also pass. Seed a row and prove it was left alone.
+    """
     repo = OutboxRepository(Outbox)
+    async with sessions() as session:
+        await repo.save(session, Stream.NOTIFICATION_CREATED, _envelope())
+        await session.commit()
+
     async with sessions() as session:
         await repo.mark_published(session, [])
         await session.commit()
+
+    async with sessions() as session:
+        assert len(await repo.get_pending(session)) == 1
 
 
 async def test_the_stored_payload_round_trips_back_into_an_envelope(sessions):
@@ -1289,7 +1312,7 @@ Both writers upsert on `(event_id, consumer_group)`: `mark_processed` may find a
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import DeclarativeBase
 
 from notification_shared.events import ConsumerGroup
@@ -1370,12 +1393,21 @@ async def test_mark_processed_overwrites_a_failing_row(sessions):
 
 
 async def test_mark_processed_twice_does_not_violate_the_unique_constraint(sessions):
+    """Asserting "did not raise" would not prove the upsert worked.
+
+    Without ON CONFLICT the second call raises; with it, exactly one row must
+    remain. Count the rows.
+    """
     repo = IdempotencyRepository(ProcessedEvent)
     event_id = uuid4()
     async with sessions() as session:
         await repo.mark_processed(session, event_id, GROUP)
         await repo.mark_processed(session, event_id, GROUP)
         await session.commit()
+
+    async with sessions() as session:
+        assert await session.scalar(select(func.count()).select_from(ProcessedEvent)) == 1
+        assert await repo.is_processed(session, event_id, GROUP) is True
 
 
 async def test_the_same_event_is_tracked_per_consumer_group(sessions):
@@ -1577,9 +1609,19 @@ async def test_ensure_group_creates_the_stream_when_it_does_not_exist(redis_clie
 
 
 async def test_ensure_group_is_idempotent(redis_client):
+    """Two calls must leave exactly one group, not merely avoid raising.
+
+    A BUSYGROUP error that was swallowed too broadly, or a second group
+    created under the same name, would both pass a no-assert test.
+    """
     consumer = RedisStreamConsumer(redis_client, consumer_name="c1")
     await consumer.ensure_group(STREAM, GROUP)
     await consumer.ensure_group(STREAM, GROUP)
+
+    groups = await redis_client.xinfo_groups(str(STREAM))
+    assert len(groups) == 1
+    name = groups[0]["name"]
+    assert (name.decode() if isinstance(name, bytes) else name) == str(GROUP)
 
 
 async def test_a_group_created_at_offset_zero_sees_earlier_messages(redis_client):
