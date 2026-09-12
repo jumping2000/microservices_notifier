@@ -126,6 +126,43 @@ services:
       retries: 5
       start_period: 30s
 
+  email-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: notif
+      POSTGRES_PASSWORD: notif
+      POSTGRES_DB: emaildb
+    ports: ["5436:5432"]
+    volumes: ["email-data:/var/lib/postgresql/data"]
+    networks: [notification-net]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U notif -d emaildb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  email-service:
+    build:
+      context: .
+      dockerfile: services/email-service/Dockerfile
+    environment:
+      DATABASE_URL: postgresql+asyncpg://notif:notif@email-db:5432/emaildb
+      REDIS_URL: redis://redis:6379/0
+      SERVICE_NAME: email-service
+      LOG_LEVEL: INFO
+    ports: ["8004:8000"]
+    networks: [notification-net]
+    restart: on-failure
+    depends_on:
+      email-db: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
 networks:
   notification-net:
 
@@ -133,4 +170,5 @@ volumes:
   configuration-data:
   notification-data:
   routing-data:
+  email-data:
   redis-data:
