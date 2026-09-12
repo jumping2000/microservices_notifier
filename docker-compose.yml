@@ -36,8 +36,61 @@ services:
       retries: 5
       start_period: 30s
 
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
+    volumes:
+      - ./docker/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+      - redis-data:/data
+    ports: ["6379:6379"]
+    networks: [notification-net]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  notification-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: notif
+      POSTGRES_PASSWORD: notif
+      POSTGRES_DB: notificationdb
+    ports: ["5433:5432"]
+    volumes: ["notification-data:/var/lib/postgresql/data"]
+    networks: [notification-net]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U notif -d notificationdb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  notification-service:
+    build:
+      context: .
+      dockerfile: services/notification-service/Dockerfile
+    environment:
+      DATABASE_URL: postgresql+asyncpg://notif:notif@notification-db:5432/notificationdb
+      REDIS_URL: redis://redis:6379/0
+      SERVICE_NAME: notification-service
+      LOG_LEVEL: INFO
+    ports: ["8001:8000"]
+    networks: [notification-net]
+    restart: on-failure
+    depends_on:
+      notification-db: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
 networks:
   notification-net:
 
 volumes:
   configuration-data:
+  notification-data:
+  redis-data:
