@@ -7,6 +7,7 @@ runs one background worker; Task 14 adds two consumers.
 from __future__ import annotations
 
 import asyncio
+import socket
 from contextlib import asynccontextmanager
 
 import redis.asyncio as aioredis
@@ -14,6 +15,8 @@ from app.api.v1.router import router
 from app.core.config import Settings
 from app.core.database import Database
 from app.models.outbox import Outbox
+from app.workers.results_consumer import ResultsConsumer
+from app.workers.routed_consumer import RoutedConsumer
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from notification_shared.exceptions import ServiceError
@@ -43,7 +46,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             poll_interval_ms=settings.outbox_poll_interval_ms,
             batch_size=settings.outbox_batch_size,
         )
-        tasks = [asyncio.create_task(publisher.run_forever(), name="outbox-publisher")]
+        routed = RoutedConsumer(
+            session_factory=app.state.db.session_factory,
+            redis=app.state.redis,
+            consumer_name=f"{socket.gethostname()}-routed",
+            poll_interval_ms=settings.consumer_poll_interval_ms,
+        )
+        results = ResultsConsumer(
+            session_factory=app.state.db.session_factory,
+            redis=app.state.redis,
+            consumer_name=f"{socket.gethostname()}-results",
+            poll_interval_ms=settings.consumer_poll_interval_ms,
+        )
+        await routed.ensure_groups()
+        await results.ensure_groups()
+
+        tasks = [
+            asyncio.create_task(publisher.run_forever(), name="outbox-publisher"),
+            asyncio.create_task(routed.run_forever(), name="routed-consumer"),
+            asyncio.create_task(results.run_forever(), name="results-consumer"),
+        ]
 
         yield
 

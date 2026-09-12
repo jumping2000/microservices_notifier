@@ -7,3 +7,4 @@ class Settings(BaseServiceSettings):
     redis_url: str = "redis://redis:6379/0"
     outbox_poll_interval_ms: int = 500
     outbox_batch_size: int = 100
+    consumer_poll_interval_ms: int = 500
