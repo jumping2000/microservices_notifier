@@ -2059,7 +2059,7 @@ git commit -m "feat(shared): add outbox publisher worker"
 
 `tests/unit/test_middleware.py`:
 ```python
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
 from notification_shared.context import get_correlation_id
@@ -2071,7 +2071,10 @@ def _app() -> FastAPI:
     app.add_middleware(CorrelationIDMiddleware)
 
     @app.get("/probe")
-    async def probe(request):  # noqa: ANN001
+    async def probe(request: Request) -> dict:
+        # The `Request` annotation is required: without it FastAPI treats
+        # `request` as a mandatory query parameter instead of injecting the
+        # request object, and every assertion below fails with a 422.
         return {
             "from_state": request.state.correlation_id,
             "from_context": get_correlation_id(),
