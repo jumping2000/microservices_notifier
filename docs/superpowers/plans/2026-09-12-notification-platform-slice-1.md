@@ -3108,7 +3108,7 @@ api/service/repository layering, async Alembic with a seed data migration."
 
 **Files:**
 - Create: `services/notification-service/` mirroring Task 10's layout, plus `models/notification.py`, `models/outbox.py`, `models/processed_event.py`, `workers/__init__.py`
-- Modify: `docker-compose.yml` (add `notification-db`, `notification-service`, `redis`), `pyproject.toml` (extend `pythonpath`)
+- Modify: `docker-compose.yml` (add `notification-db`, `notification-service`, `redis`)
 - Test: `tests/integration/test_notification_service.py`
 
 **Interfaces:**
