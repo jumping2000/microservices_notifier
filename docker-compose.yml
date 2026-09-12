@@ -1,0 +1,43 @@
+name: notification-platform
+
+services:
+  configuration-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: notif
+      POSTGRES_PASSWORD: notif
+      POSTGRES_DB: configurationdb
+    ports: ["5435:5432"]
+    volumes: ["configuration-data:/var/lib/postgresql/data"]
+    networks: [notification-net]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U notif -d configurationdb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  configuration-service:
+    build:
+      context: .
+      dockerfile: services/configuration-service/Dockerfile
+    environment:
+      DATABASE_URL: postgresql+asyncpg://notif:notif@configuration-db:5432/configurationdb
+      SERVICE_NAME: configuration-service
+      LOG_LEVEL: INFO
+    ports: ["8003:8000"]
+    networks: [notification-net]
+    restart: on-failure
+    depends_on:
+      configuration-db: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+networks:
+  notification-net:
+
+volumes:
+  configuration-data:
