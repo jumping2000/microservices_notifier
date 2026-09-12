@@ -87,10 +87,50 @@ services:
       retries: 5
       start_period: 30s
 
+  routing-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: notif
+      POSTGRES_PASSWORD: notif
+      POSTGRES_DB: routingdb
+    ports: ["5434:5432"]
+    volumes: ["routing-data:/var/lib/postgresql/data"]
+    networks: [notification-net]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U notif -d routingdb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  routing-service:
+    build:
+      context: .
+      dockerfile: services/routing-service/Dockerfile
+    environment:
+      DATABASE_URL: postgresql+asyncpg://notif:notif@routing-db:5432/routingdb
+      REDIS_URL: redis://redis:6379/0
+      CONFIGURATION_SERVICE_URL: http://configuration-service:8000
+      SERVICE_NAME: routing-service
+      LOG_LEVEL: INFO
+    ports: ["8002:8000"]
+    networks: [notification-net]
+    restart: on-failure
+    depends_on:
+      routing-db: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      configuration-service: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
 networks:
   notification-net:
 
 volumes:
   configuration-data:
   notification-data:
+  routing-data:
   redis-data:
