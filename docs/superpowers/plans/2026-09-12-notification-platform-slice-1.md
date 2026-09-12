@@ -126,7 +126,10 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .env
+.superpowers/
 ```
+
+`.superpowers/` holds the execution workspace (task briefs, reports, review packages) and must never be committed.
 
 - [ ] **Step 2: Write the root `pyproject.toml`**
 
@@ -189,10 +192,15 @@ dependencies = [
     "starlette>=0.49.0",
 ]
 
+[project.optional-dependencies]
+testing = ["pytest>=9.1.1", "testcontainers>=4.15.0"]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 ```
+
+The `testing` extra declares what `notification_shared.testing` (Task 5) imports. The root dev group already installs both, so nothing changes operationally — but a package that ships a module importing undeclared dependencies is a defect, and the service images build with `--no-dev`, which excludes them.
 
 Create `shared/notification_shared/__init__.py` as an empty file, plus empty `__init__.py` in each of the three test directories.
 
@@ -3918,13 +3926,14 @@ async def test_a_configuration_timeout_behaves_the_same_as_a_5xx(
         assert await session.scalar(select(func.count()).select_from(Route)) == 0
 
 
-async def test_recovery_after_an_outage_routes_the_same_message(
+async def test_an_outage_leaves_the_message_pending_for_recovery(
     make_consumer, sessions, redis_client
 ):
-    """Nothing was acked during the outage, so a fresh reader sees it again.
+    """Nothing is acked during an outage, so the message survives as pending.
 
-    Slice 1 has no XCLAIM worker, so the test simulates recovery with a second
-    consumer name reading the same group's backlog via a new group read.
+    Slice 1 has no XCLAIM worker, so the guarantee this test pins is narrow
+    and deliberately so: the message is pending, not lost. Slice 2's recovery
+    worker is what actually re-routes it.
     """
     down = make_consumer(_unavailable)
     await down.ensure_groups()
