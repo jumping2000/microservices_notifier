@@ -5017,7 +5017,9 @@ git commit -m "feat(email-service): add notification.routed consumer and simulat
 
 This is the task that closes the saga, and the one where correctness is subtle. `notification-service-routed` and `notification-service-results` are independent consumer groups with no ordering guarantee between them, so the transitions are guarded in SQL. See spec 3.16.
 
-Legal transitions: `CREATED → PROCESSING`, `CREATED → FAILED`, `PROCESSING → COMPLETED`, `PROCESSING → FAILED`. Terminal states never reopen. A handler whose guard matches nothing updates zero rows, logs, and still acks.
+Legal transitions: `CREATED → PROCESSING`, `CREATED → COMPLETED`, `CREATED → FAILED`, `PROCESSING → COMPLETED`, `PROCESSING → FAILED`. Terminal states never reopen. A handler whose guard matches nothing updates zero rows, logs, and still acks.
+
+`CREATED → COMPLETED` belongs in that list even though it looks like a gap. In the race this task exists to handle, the delivery result is consumed *before* `notification.routed`, so the row is still `CREATED` when the completion lands. A results guard admitting only `PROCESSING` would match zero rows there — and since the handler still acks and still marks the event processed, it would never be redelivered and the notification would sit at `CREATED` forever. That is why `NON_TERMINAL` contains both states and is used for both terminal destinations.
 
 - [ ] **Step 1: Write the failing tests**
 

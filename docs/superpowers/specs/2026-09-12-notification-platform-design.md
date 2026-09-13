@@ -205,9 +205,17 @@ wrong state for a polling client.
 | results consumer | `SET status=:status WHERE id=:id AND status IN ('CREATED','PROCESSING')` |
 | stale watchdog (slice 2) | `SET status='FAILED' WHERE status='PROCESSING' AND updated_at < :cutoff` |
 
-Legal transitions: `CREATED → PROCESSING`, `CREATED → FAILED`, `PROCESSING → COMPLETED`,
-`PROCESSING → FAILED`. Terminal states never reopen. An out-of-order handler updates zero rows
-and still `XACK`s.
+Legal transitions: `CREATED → PROCESSING`, `CREATED → COMPLETED`, `CREATED → FAILED`,
+`PROCESSING → COMPLETED`, `PROCESSING → FAILED`. Terminal states never reopen. An out-of-order
+handler updates zero rows and still `XACK`s.
+
+`CREATED → COMPLETED` is in that list for a reason worth stating, because it looks like a gap in
+the state machine and is not. In the very race this correction exists to handle, the delivery
+result is consumed *before* `notification.routed`, so the row is still `CREATED` when the
+completion arrives. If the results handler's guard admitted only `PROCESSING`, that update would
+match zero rows — and because the handler still acks and still marks the event processed, the
+event would never be redelivered and the notification would sit at `CREATED` forever. The
+guard therefore admits both non-terminal states for both terminal destinations.
 
 ### 3.17 Event payload schemas
 
