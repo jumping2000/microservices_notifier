@@ -2360,7 +2360,9 @@ uv run pytest tests/integration -v
 uv run ruff check .
 ```
 
-Expected: unit tier 38 tests PASS; integration tier 29 tests PASS; ruff clean.
+Expected: unit tier 39 tests PASS; integration tier 29 tests PASS; ruff clean.
+
+(39, not 38: Task 2's review added a test proving `EventEnvelope` is frozen.)
 
 - [ ] **Step 6: Commit**
 
@@ -6192,7 +6194,7 @@ uv run pytest tests/e2e
 docker compose down -v
 ```
 
-Expected totals: ruff clean; unit 38; integration 29; configuration 11; notification 24; routing 17; email 9; e2e 7.
+Expected totals: ruff clean; unit 39; integration 29; configuration 11; notification 24; routing 17; email 9; e2e 7. Grand total 129.
 
 - [ ] **Step 5: Commit**
 
@@ -6523,7 +6525,7 @@ git commit -m "docs: add architecture, event flows, patterns, ADRs and editor co
 All five gates from spec section 14, verified in one clean pass:
 
 - [ ] `uv run ruff check .` and `uv run ruff format --check .` clean
-- [ ] `uv run pytest tests/unit` — 38 passing
+- [ ] `uv run pytest tests/unit` — 39 passing
 - [ ] `uv run pytest tests/integration` — 29 passing
 - [ ] All four service suites passing — 11 + 24 + 17 + 9 = 61
 - [ ] `docker compose up --build -d --wait` brings all nine containers to `healthy`
