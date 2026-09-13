@@ -1,0 +1,78 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "notification-service",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": ["app.main:create_app", "--factory", "--port", "8001", "--reload"],
+      "cwd": "${workspaceFolder}/services/notification-service",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/services/notification-service",
+        "DATABASE_URL": "postgresql+asyncpg://notif:notif@localhost:5433/notificationdb",
+        "REDIS_URL": "redis://localhost:6379/0",
+        "SERVICE_NAME": "notification-service",
+        "LOG_LEVEL": "DEBUG"
+      },
+      "justMyCode": false
+    },
+    {
+      "name": "routing-service",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": ["app.main:create_app", "--factory", "--port", "8002", "--reload"],
+      "cwd": "${workspaceFolder}/services/routing-service",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/services/routing-service",
+        "DATABASE_URL": "postgresql+asyncpg://notif:notif@localhost:5434/routingdb",
+        "REDIS_URL": "redis://localhost:6379/0",
+        "CONFIGURATION_SERVICE_URL": "http://localhost:8003",
+        "SERVICE_NAME": "routing-service",
+        "LOG_LEVEL": "DEBUG"
+      },
+      "justMyCode": false
+    },
+    {
+      "name": "configuration-service",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": ["app.main:create_app", "--factory", "--port", "8003", "--reload"],
+      "cwd": "${workspaceFolder}/services/configuration-service",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/services/configuration-service",
+        "DATABASE_URL": "postgresql+asyncpg://notif:notif@localhost:5435/configurationdb",
+        "SERVICE_NAME": "configuration-service",
+        "LOG_LEVEL": "DEBUG"
+      },
+      "justMyCode": false
+    },
+    {
+      "name": "email-service",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": ["app.main:create_app", "--factory", "--port", "8004", "--reload"],
+      "cwd": "${workspaceFolder}/services/email-service",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/services/email-service",
+        "DATABASE_URL": "postgresql+asyncpg://notif:notif@localhost:5436/emaildb",
+        "REDIS_URL": "redis://localhost:6379/0",
+        "SERVICE_NAME": "email-service",
+        "LOG_LEVEL": "DEBUG"
+      },
+      "justMyCode": false
+    },
+    {
+      "name": "Debug Tests",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "pytest",
+      "args": ["${file}", "-v"],
+      "console": "integratedTerminal",
+      "justMyCode": false
+    }
+  ]
+}

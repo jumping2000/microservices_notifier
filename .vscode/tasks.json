@@ -1,0 +1,62 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "uv sync",
+      "type": "shell",
+      "command": "uv sync --all-packages",
+      "problemMatcher": []
+    },
+    {
+      "label": "compose up (build)",
+      "type": "shell",
+      "command": "docker compose up --build -d --wait",
+      "problemMatcher": []
+    },
+    {
+      "label": "compose down (reset volumes)",
+      "type": "shell",
+      "command": "docker compose down -v",
+      "problemMatcher": []
+    },
+    {
+      "label": "compose up (infra only)",
+      "type": "shell",
+      "command": "docker compose up -d redis notification-db routing-db configuration-db email-db",
+      "problemMatcher": []
+    },
+    {
+      "label": "test: unit",
+      "type": "shell",
+      "command": "uv run pytest tests/unit -v",
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
+      "label": "test: integration (shared)",
+      "type": "shell",
+      "command": "uv run pytest tests/integration -v",
+      "problemMatcher": []
+    },
+    {
+      "label": "test: integration (all services)",
+      "type": "shell",
+      "command": "for s in configuration-service notification-service routing-service email-service; do PYTHONPATH=services/$s uv run pytest services/$s/tests -v || exit 1; done",
+      "options": { "shell": { "executable": "bash.exe" } },
+      "problemMatcher": []
+    },
+    {
+      "label": "test: e2e",
+      "type": "shell",
+      "command": "uv run pytest tests/e2e -v",
+      "dependsOn": "compose up (build)",
+      "problemMatcher": []
+    },
+    {
+      "label": "lint",
+      "type": "shell",
+      "command": "uv run ruff check . && uv run ruff format --check .",
+      "problemMatcher": []
+    }
+  ]
+}
