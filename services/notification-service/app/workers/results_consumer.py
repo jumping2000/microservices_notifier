@@ -41,9 +41,7 @@ class ResultsConsumer:
     async def consume_once(self) -> int:
         acked = 0
         for stream in STREAMS:
-            messages = await self._consumer.read(
-                stream, GROUP, block_ms=self._poll_interval_ms
-            )
+            messages = await self._consumer.read(stream, GROUP, block_ms=self._poll_interval_ms)
             for message in messages:
                 if await self._handle(message.envelope):
                     await self._consumer.ack(stream, GROUP, message.message_id)

@@ -21,17 +21,17 @@ async def sessions(make_schema):
 @pytest.fixture
 def consumer(sessions, redis_client) -> ResultsConsumer:
     return ResultsConsumer(
-        session_factory=sessions, redis=redis_client,
-        consumer_name="routing-results-test", poll_interval_ms=10,
+        session_factory=sessions,
+        redis=redis_client,
+        consumer_name="routing-results-test",
+        poll_interval_ms=10,
     )
 
 
 async def _seed_route(sessions, status: str = RouteStatus.PROCESSING.value):
     notification_id = uuid4()
     async with sessions() as session:
-        session.add(
-            Route(notification_id=notification_id, channel="email", status=status)
-        )
+        session.add(Route(notification_id=notification_id, channel="email", status=status))
         await session.commit()
     return notification_id
 
@@ -52,8 +52,10 @@ def _completed(notification_id) -> EventEnvelope:
         event_type=EventType.DELIVERY_COMPLETED,
         aggregate_id=notification_id,
         payload={
-            "channel": "email", "delivery_id": str(uuid4()),
-            "recipient": "a@b.com", "delivered_at": datetime.now(UTC).isoformat(),
+            "channel": "email",
+            "delivery_id": str(uuid4()),
+            "recipient": "a@b.com",
+            "delivered_at": datetime.now(UTC).isoformat(),
         },
         correlation_id="corr-rr",
     )
@@ -64,7 +66,8 @@ def _delivery_failed(notification_id) -> EventEnvelope:
         event_type=EventType.DELIVERY_FAILED,
         aggregate_id=notification_id,
         payload={
-            "channel": "email", "delivery_id": str(uuid4()),
+            "channel": "email",
+            "delivery_id": str(uuid4()),
             "reason": "simulated_failure",
         },
         correlation_id="corr-rr",
@@ -76,16 +79,15 @@ def _routing_failed(notification_id) -> EventEnvelope:
         event_type=EventType.ROUTING_FAILED,
         aggregate_id=notification_id,
         payload={
-            "channel": "email", "route_id": str(uuid4()),
+            "channel": "email",
+            "route_id": str(uuid4()),
             "reason": "channel_disabled",
         },
         correlation_id="corr-rr",
     )
 
 
-async def test_delivery_completed_marks_the_route_completed(
-    consumer, sessions, redis_client
-):
+async def test_delivery_completed_marks_the_route_completed(consumer, sessions, redis_client):
     notification_id = await _seed_route(sessions)
     await consumer.ensure_groups()
     await RedisStreamPublisher(redis_client).publish(
@@ -137,9 +139,7 @@ async def test_routing_failed_is_acked_and_skipped(consumer, sessions, redis_cli
 
 async def test_an_event_for_an_unknown_route_is_acked(consumer, redis_client):
     await consumer.ensure_groups()
-    await RedisStreamPublisher(redis_client).publish(
-        Stream.DELIVERY_COMPLETED, _completed(uuid4())
-    )
+    await RedisStreamPublisher(redis_client).publish(Stream.DELIVERY_COMPLETED, _completed(uuid4()))
     assert await consumer.consume_once() == 1
 
 

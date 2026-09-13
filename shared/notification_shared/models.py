@@ -52,9 +52,7 @@ class OutboxMixin:
 
     @declared_attr.directive
     def __table_args__(cls) -> tuple:  # noqa: N805
-        return (
-            Index(f"ix_{cls.__tablename__}_pending", "published", "created_at"),
-        )
+        return (Index(f"ix_{cls.__tablename__}_pending", "published", "created_at"),)
 
 
 class ProcessedEventMixin:

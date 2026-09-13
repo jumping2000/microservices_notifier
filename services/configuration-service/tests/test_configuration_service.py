@@ -73,9 +73,7 @@ async def test_an_unknown_channel_returns_404_with_the_common_error_model(client
     await _seed(sessions)
     response = await client.get("/channels/sms")
     assert response.status_code == 404
-    assert response.json() == {
-        "error": {"code": "NOT_FOUND", "message": "channel 'sms' not found"}
-    }
+    assert response.json() == {"error": {"code": "NOT_FOUND", "message": "channel 'sms' not found"}}
 
 
 async def test_put_disables_a_channel_and_the_change_is_readable(client, sessions):

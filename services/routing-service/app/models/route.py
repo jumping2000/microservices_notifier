@@ -23,6 +23,4 @@ class Route(Base, TimestampMixin):
     status: Mapped[str] = mapped_column(String(20), nullable=False)
     fail_reason: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
-    __table_args__ = (
-        UniqueConstraint("notification_id", name="uq_routes_notification_id"),
-    )
+    __table_args__ = (UniqueConstraint("notification_id", name="uq_routes_notification_id"),)

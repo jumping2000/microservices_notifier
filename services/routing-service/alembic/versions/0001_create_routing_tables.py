@@ -5,6 +5,7 @@ Revises:
 Create Date: 2026-09-13 01:19:05.147204
 
 """
+
 from collections.abc import Sequence
 
 import sqlalchemy as sa
@@ -71,9 +72,7 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint(
-            "event_id", "consumer_group", name="uq_processed_events_event_group"
-        ),
+        sa.UniqueConstraint("event_id", "consumer_group", name="uq_processed_events_event_group"),
     )
 
 

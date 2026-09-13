@@ -58,9 +58,7 @@ class NotificationCreatedConsumer:
 
     async def consume_once(self) -> int:
         """Read one batch. Returns how many messages were acked."""
-        messages = await self._consumer.read(
-            STREAM, GROUP, block_ms=self._poll_interval_ms
-        )
+        messages = await self._consumer.read(STREAM, GROUP, block_ms=self._poll_interval_ms)
         acked = 0
         for message in messages:
             if await self._handle(message.envelope):

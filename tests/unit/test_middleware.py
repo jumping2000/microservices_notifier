@@ -22,9 +22,7 @@ def _app() -> FastAPI:
 
 
 def _client() -> httpx.AsyncClient:
-    return httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=_app()), base_url="http://test"
-    )
+    return httpx.AsyncClient(transport=httpx.ASGITransport(app=_app()), base_url="http://test")
 
 
 async def test_an_absent_header_is_generated():

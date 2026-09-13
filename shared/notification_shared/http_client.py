@@ -23,9 +23,7 @@ class ServiceClient:
         timeout: float = 5.0,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
-        self._client = httpx.AsyncClient(
-            base_url=base_url, timeout=timeout, transport=transport
-        )
+        self._client = httpx.AsyncClient(base_url=base_url, timeout=timeout, transport=transport)
 
     async def get(self, path: str) -> dict[str, Any]:
         return await self._send("GET", path)
@@ -52,7 +50,5 @@ class ServiceClient:
         if response.status_code == 404:
             raise NotFoundError(f"{method} {path} returned 404")
         if response.status_code >= 500:
-            raise ServiceUnavailableError(
-                f"{method} {path} returned {response.status_code}"
-            )
+            raise ServiceUnavailableError(f"{method} {path} returned {response.status_code}")
         return response.json()

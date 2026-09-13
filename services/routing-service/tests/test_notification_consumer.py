@@ -138,9 +138,7 @@ async def test_a_disabled_channel_produces_a_failed_route_and_routing_failed(
         assert published.payload["route_id"] == str(route.id)
 
 
-async def test_an_unknown_channel_fails_with_unknown_channel(
-    make_consumer, sessions, redis_client
-):
+async def test_an_unknown_channel_fails_with_unknown_channel(make_consumer, sessions, redis_client):
     consumer = make_consumer(_absent)
     await consumer.ensure_groups()
     await _publish(redis_client, _created_event("email"))

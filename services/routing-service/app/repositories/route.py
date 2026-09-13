@@ -27,6 +27,4 @@ class RouteRepository:
     async def get_by_notification(
         self, session: AsyncSession, notification_id: UUID
     ) -> Route | None:
-        return await session.scalar(
-            select(Route).where(Route.notification_id == notification_id)
-        )
+        return await session.scalar(select(Route).where(Route.notification_id == notification_id))

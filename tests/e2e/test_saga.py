@@ -65,9 +65,7 @@ async def test_a_failing_recipient_reaches_failed_with_the_delivery_reason(
     assert settled["fail_reason"] == "simulated_failure"
 
 
-async def test_the_client_can_observe_the_processing_state(
-    notifications, email_enabled, settle
-):
+async def test_the_client_can_observe_the_processing_state(notifications, email_enabled, settle):
     """The polling guide claims PROCESSING is observable. Prove it.
 
     Delivery latency is up to 500ms and the poll interval is 250ms, so

@@ -20,6 +20,13 @@ dev = [
 [tool.ruff]
 line-length = 100
 target-version = "py314"
+# Ruff 0.16 formats Python code blocks inside Markdown. Three of the Markdown
+# files in this repository are historical records - the spec, the plan, and the
+# original requirements prompt - and rewriting them to satisfy a formatter
+# would corrupt the record of what was decided. Excluding Markdown also makes
+# `ruff format --check .` mean what the Definition of Done intends: the Python
+# sources are clean.
+extend-exclude = ["*.md"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "ASYNC"]

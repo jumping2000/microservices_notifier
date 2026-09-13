@@ -68,9 +68,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await app.state.redis.aclose()
         await app.state.db.dispose()
 
-    app = FastAPI(
-        title="Email Service", version=settings.service_version, lifespan=lifespan
-    )
+    app = FastAPI(title="Email Service", version=settings.service_version, lifespan=lifespan)
     app.add_middleware(CorrelationIDMiddleware)
     app.include_router(router)
 

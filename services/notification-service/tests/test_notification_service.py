@@ -74,9 +74,7 @@ async def test_post_writes_the_notification_and_the_outbox_row_together(client, 
 
 
 async def test_the_request_correlation_id_reaches_the_envelope(client, sessions):
-    await client.post(
-        "/notifications", json=VALID_BODY, headers={"X-Correlation-ID": "corr-write"}
-    )
+    await client.post("/notifications", json=VALID_BODY, headers={"X-Correlation-ID": "corr-write"})
     async with sessions() as session:
         row = (await session.scalars(select(Outbox))).one()
         assert EventEnvelope.model_validate(row.payload).correlation_id == "corr-write"

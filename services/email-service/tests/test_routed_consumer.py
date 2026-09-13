@@ -122,9 +122,7 @@ async def test_a_telegram_event_is_acked_and_skipped(consumer, sessions, redis_c
         assert await session.scalar(select(func.count()).select_from(EmailDelivery)) == 0
         assert await session.scalar(select(func.count()).select_from(Outbox)) == 0
 
-    pending = await redis_client.xpending(
-        str(Stream.NOTIFICATION_ROUTED), str(ConsumerGroup.EMAIL)
-    )
+    pending = await redis_client.xpending(str(Stream.NOTIFICATION_ROUTED), str(ConsumerGroup.EMAIL))
     assert pending["pending"] == 0
 
 

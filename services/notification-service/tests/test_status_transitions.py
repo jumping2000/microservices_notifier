@@ -26,16 +26,20 @@ async def sessions(make_schema):
 @pytest.fixture
 def routed(sessions, redis_client) -> RoutedConsumer:
     return RoutedConsumer(
-        session_factory=sessions, redis=redis_client,
-        consumer_name="notif-routed-test", poll_interval_ms=10,
+        session_factory=sessions,
+        redis=redis_client,
+        consumer_name="notif-routed-test",
+        poll_interval_ms=10,
     )
 
 
 @pytest.fixture
 def results(sessions, redis_client) -> ResultsConsumer:
     return ResultsConsumer(
-        session_factory=sessions, redis=redis_client,
-        consumer_name="notif-results-test", poll_interval_ms=10,
+        session_factory=sessions,
+        redis=redis_client,
+        consumer_name="notif-results-test",
+        poll_interval_ms=10,
     )
 
 
@@ -44,8 +48,11 @@ async def _seed_notification(sessions, status: str = NotificationStatus.CREATED.
     async with sessions() as session:
         session.add(
             Notification(
-                id=notification_id, channel=Channel.EMAIL.value,
-                recipient="john@example.com", subject=None, body="Hello",
+                id=notification_id,
+                channel=Channel.EMAIL.value,
+                recipient="john@example.com",
+                subject=None,
+                body="Hello",
                 status=status,
             )
         )
@@ -70,8 +77,11 @@ def _routed_event(notification_id) -> EventEnvelope:
         event_type=EventType.NOTIFICATION_ROUTED,
         aggregate_id=notification_id,
         payload={
-            "channel": "email", "recipient": "john@example.com",
-            "subject": None, "body": "Hello", "route_id": str(uuid4()),
+            "channel": "email",
+            "recipient": "john@example.com",
+            "subject": None,
+            "body": "Hello",
+            "route_id": str(uuid4()),
         },
         correlation_id="corr-transition",
     )
@@ -82,7 +92,8 @@ def _completed_event(notification_id) -> EventEnvelope:
         event_type=EventType.DELIVERY_COMPLETED,
         aggregate_id=notification_id,
         payload={
-            "channel": "email", "delivery_id": str(uuid4()),
+            "channel": "email",
+            "delivery_id": str(uuid4()),
             "recipient": "john@example.com",
             "delivered_at": datetime.now(UTC).isoformat(),
         },
@@ -95,7 +106,8 @@ def _delivery_failed_event(notification_id) -> EventEnvelope:
         event_type=EventType.DELIVERY_FAILED,
         aggregate_id=notification_id,
         payload={
-            "channel": "email", "delivery_id": str(uuid4()),
+            "channel": "email",
+            "delivery_id": str(uuid4()),
             "reason": "simulated_failure",
         },
         correlation_id="corr-transition",
@@ -107,7 +119,8 @@ def _routing_failed_event(notification_id) -> EventEnvelope:
         event_type=EventType.ROUTING_FAILED,
         aggregate_id=notification_id,
         payload={
-            "channel": "email", "route_id": str(uuid4()),
+            "channel": "email",
+            "route_id": str(uuid4()),
             "reason": "channel_disabled",
         },
         correlation_id="corr-transition",
@@ -125,9 +138,7 @@ async def test_the_routed_event_moves_created_to_processing(routed, sessions, re
     assert await _status(sessions, notification_id) == (NotificationStatus.PROCESSING, None)
 
 
-async def test_the_completed_event_moves_processing_to_completed(
-    results, sessions, redis_client
-):
+async def test_the_completed_event_moves_processing_to_completed(results, sessions, redis_client):
     notification_id = await _seed_notification(sessions, NotificationStatus.PROCESSING.value)
     await results.ensure_groups()
     await RedisStreamPublisher(redis_client).publish(
@@ -152,9 +163,7 @@ async def test_a_delivery_failure_records_the_reason(results, sessions, redis_cl
     )
 
 
-async def test_routing_failed_moves_created_straight_to_failed(
-    results, sessions, redis_client
-):
+async def test_routing_failed_moves_created_straight_to_failed(results, sessions, redis_client):
     """No notification.routed is published when routing fails, so PROCESSING is skipped."""
     notification_id = await _seed_notification(sessions)
     await results.ensure_groups()
@@ -207,9 +216,7 @@ async def test_a_completed_notification_is_not_reopened_by_a_later_failure(
     assert (await _status(sessions, notification_id))[0] == NotificationStatus.COMPLETED
 
 
-async def test_an_event_for_an_unknown_notification_is_acked(
-    results, sessions, redis_client
-):
+async def test_an_event_for_an_unknown_notification_is_acked(results, sessions, redis_client):
     await results.ensure_groups()
     await RedisStreamPublisher(redis_client).publish(
         Stream.DELIVERY_COMPLETED, _completed_event(uuid4())
@@ -233,9 +240,7 @@ async def test_a_replayed_routed_event_is_acked_once_and_changes_nothing_twice(
     assert (await _status(sessions, notification_id))[0] == NotificationStatus.PROCESSING
 
 
-async def test_the_results_consumer_reads_both_result_streams(
-    results, sessions, redis_client
-):
+async def test_the_results_consumer_reads_both_result_streams(results, sessions, redis_client):
     first = await _seed_notification(sessions, NotificationStatus.PROCESSING.value)
     second = await _seed_notification(sessions, NotificationStatus.PROCESSING.value)
     await results.ensure_groups()
@@ -249,9 +254,7 @@ async def test_the_results_consumer_reads_both_result_streams(
     assert (await _status(sessions, second))[0] == NotificationStatus.FAILED
 
 
-async def test_the_full_ordered_sequence_ends_completed(
-    routed, results, sessions, redis_client
-):
+async def test_the_full_ordered_sequence_ends_completed(routed, results, sessions, redis_client):
     notification_id = await _seed_notification(sessions)
     await routed.ensure_groups()
     await results.ensure_groups()

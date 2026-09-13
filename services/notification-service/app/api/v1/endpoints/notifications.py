@@ -57,6 +57,4 @@ async def list_notifications(
     channel: str | None = None,
     session: AsyncSession = Depends(get_db),
 ) -> list[NotificationRead]:
-    return await service.list(
-        session, limit=limit, offset=offset, status=status, channel=channel
-    )
+    return await service.list(session, limit=limit, offset=offset, status=status, channel=channel)

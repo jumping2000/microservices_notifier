@@ -21,9 +21,7 @@ class OutboxRepository:
         self.model = model
 
     async def save(self, session: AsyncSession, stream: str, envelope: EventEnvelope) -> None:
-        session.add(
-            self.model(stream=str(stream), payload=envelope.model_dump(mode="json"))
-        )
+        session.add(self.model(stream=str(stream), payload=envelope.model_dump(mode="json")))
 
     async def get_pending(self, session: AsyncSession, limit: int = 100) -> Sequence[Any]:
         stmt = (
