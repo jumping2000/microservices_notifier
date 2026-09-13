@@ -6194,7 +6194,7 @@ uv run pytest tests/e2e
 docker compose down -v
 ```
 
-Expected totals: ruff clean; unit 39; integration 29; configuration 11; notification 24; routing 17; email 9; e2e 7. Grand total 129.
+Expected totals: ruff clean; unit 39; integration 29; configuration 11; notification 24; routing 17; email 9; e2e 7. Grand total 136.
 
 - [ ] **Step 5: Commit**
 
