@@ -4,14 +4,11 @@ import pytest
 pytestmark = pytest.mark.e2e
 
 
-async def test_every_service_reports_healthy(notifications, configuration):
-    for client in (notifications, configuration):
-        body = (await client.get("/health")).json()
-        assert body["status"] == "UP", body
-    for port in (8002, 8004):
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            body = (await client.get(f"http://localhost:{port}/health")).json()
-        assert body["status"] == "UP", body
+async def test_every_service_reports_healthy(service_urls):
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        for base_url in service_urls:
+            body = (await client.get(f"{base_url}/health")).json()
+            assert body["status"] == "UP", (base_url, body)
 
 
 async def test_the_happy_path_reaches_completed(notifications, email_enabled, settle):
