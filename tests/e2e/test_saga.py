@@ -68,9 +68,9 @@ async def test_a_failing_recipient_reaches_failed_with_the_delivery_reason(
 async def test_the_client_can_observe_the_processing_state(notifications, email_enabled, settle):
     """The polling guide claims PROCESSING is observable. Prove it.
 
-    Delivery latency is up to 500ms and the poll interval is 250ms, so
-    PROCESSING is normally seen — but the assertion is on the terminal state so
-    the test cannot flake on timing.
+    The compose stack sets email-service's DELIVERY_LATENCY_MS_MAX to 2000ms,
+    well above the 250ms poll interval, so PROCESSING is deterministically
+    observable rather than a race the test could win or lose on timing.
     """
     notification_id = (
         await notifications.post(
@@ -81,7 +81,7 @@ async def test_the_client_can_observe_the_processing_state(notifications, email_
 
     settled = await settle(notifications, notification_id)
     assert settled["status"] == "COMPLETED"
-    assert settled["_observed"][0] in {"CREATED", "PROCESSING"}
+    assert "PROCESSING" in settled["_observed"]
     assert settled["_observed"][-1] == "COMPLETED"
 
 
@@ -90,6 +90,10 @@ async def test_an_invalid_payload_is_rejected_before_anything_is_created(notific
         "/notifications", json={"channel": "carrier-pigeon", "recipient": "a", "body": "b"}
     )
     assert response.status_code == 422
+    assert response.json()["error"]["code"] == "VALIDATION_ERROR"
+
+    listed = (await notifications.get("/notifications?limit=100")).json()
+    assert all(item["channel"] != "carrier-pigeon" for item in listed)
 
 
 async def test_the_list_endpoint_returns_the_notifications_created_by_this_run(

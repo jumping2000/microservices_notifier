@@ -19,9 +19,8 @@ class ChannelService:
         return ChannelRead.model_validate(row)
 
     async def set_enabled(self, session: AsyncSession, name: str, enabled: bool) -> ChannelRead:
-        row = await self._repository.get(session, name)
+        row = await self._repository.set_enabled(session, name, enabled)
         if row is None:
             raise NotFoundError(f"channel '{name}' not found")
-        row.enabled = enabled
         await session.commit()
         return ChannelRead.model_validate(row)

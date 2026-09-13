@@ -84,7 +84,11 @@ class ResultsConsumer:
                 return True
 
             updated = await self._routes.set_status(
-                session, envelope.aggregate_id, new_status, fail_reason
+                session,
+                envelope.aggregate_id,
+                new_status,
+                allowed_from=[RouteStatus.PROCESSING.value],
+                fail_reason=fail_reason,
             )
             await self._idempotency.mark_processed(session, envelope.event_id, GROUP)
             await session.commit()

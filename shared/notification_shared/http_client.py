@@ -49,6 +49,11 @@ class ServiceClient:
 
         if response.status_code == 404:
             raise NotFoundError(f"{method} {path} returned 404")
-        if response.status_code >= 500:
+        if response.status_code >= 300:
+            # Any other non-2xx — including 4xx other than 404 — is treated as
+            # transient rather than silently handed back as a successful body.
+            # A 400/401/403/422 falling through here would otherwise be parsed
+            # as if it were a valid response, e.g. `state["enabled"]` raising an
+            # unhandled KeyError on `{"detail": [...]}` several frames away.
             raise ServiceUnavailableError(f"{method} {path} returned {response.status_code}")
         return response.json()

@@ -7,7 +7,7 @@ endpoints**: its entire job runs in background consumers reacting to `notificati
 
 | Table | Purpose |
 |---|---|
-| `email_delivery` | One row per notification: `notification_id` (unique), `recipient`, `status` (`SENDING`\|`DELIVERED`\|`FAILED`), `fail_reason`, `sent_at` |
+| `email_delivery` | One row per notification, inserted once already in its terminal state: `notification_id` (unique), `recipient`, `status` (`DELIVERED`\|`FAILED`; `SENDING` is a defined but unwritten enum member — see ADR 0022), `fail_reason`, `sent_at` |
 | `outbox` | Events awaiting publication (`OutboxMixin`) |
 | `processed_events` | Idempotency ledger (`ProcessedEventMixin`) |
 
@@ -15,7 +15,7 @@ endpoints**: its entire job runs in background consumers reacting to `notificati
 
 | Stream | Consumer group | Behaviour |
 |---|---|---|
-| `notification.routed` | `email-service` | Filters `payload.channel == "email"` (acks and skips otherwise); simulates delivery; writes `email_delivery` and publishes `DeliveryCompleted` or `DeliveryFailed` |
+| `notification.routed` | `email-service` | Filters `payload.channel == "email"` (acks and skips otherwise); simulates delivery, then writes `email_delivery` already in its terminal state and publishes `DeliveryCompleted` or `DeliveryFailed` |
 
 ## Streams published
 

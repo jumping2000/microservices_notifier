@@ -47,19 +47,26 @@ class OutboxPublisher:
                 return 0
 
             published_ids = []
-            for row in rows:
-                envelope = EventEnvelope.model_validate(row.payload)
-                set_correlation_id(envelope.correlation_id)
-                await self._publisher.publish(row.stream, envelope)
-                logger.debug(
-                    "published event to stream",
-                    extra={
-                        "event_id": envelope.event_id,
-                        "event_type": envelope.event_type,
-                        "stream": row.stream,
-                    },
-                )
-                published_ids.append(row.id)
+            try:
+                for row in rows:
+                    envelope = EventEnvelope.model_validate(row.payload)
+                    set_correlation_id(envelope.correlation_id)
+                    await self._publisher.publish(row.stream, envelope)
+                    logger.debug(
+                        "published event to stream",
+                        extra={
+                            "event_id": envelope.event_id,
+                            "event_type": envelope.event_type,
+                            "stream": row.stream,
+                        },
+                    )
+                    published_ids.append(row.id)
+            finally:
+                # Otherwise a failure logged after this loop (including
+                # run_forever's own "iteration failed") is stamped with the
+                # last successfully-published row's correlation id, blaming
+                # an unrelated event for the failure. See spec 15.
+                set_correlation_id(None)
 
             await self._repository.mark_published(session, published_ids)
             await session.commit()

@@ -376,10 +376,21 @@ All groups are created with `XGROUP CREATE <stream> <group> 0 MKSTREAM` inside t
 
 ### 5.4 Transactional rule for consumers
 
-Every consumer handler runs **one** database transaction containing: the idempotency check, the
-domain state change, any outbox row, and the `mark_processed` write. `XACK` happens only after
-that transaction commits. This is the point at which the Outbox Pattern is demonstrated, and the
-integration tests in section 10 assert it directly.
+The domain state change, any outbox row, and the `mark_processed` write are always atomic: one
+database transaction, committed together, with `XACK` happening only after that commit. This is
+the point at which the Outbox Pattern is demonstrated, and the integration tests in section 10
+assert it directly.
+
+The idempotency check (`is_processed`) is part of that same transaction only when the handler has
+nothing slower than a local write to do between the check and the decision. When a handler must
+perform slow I/O — a synchronous REST call, a delivery latency — before it can decide what the
+state change even is, that I/O must not run inside an open transaction, so `is_processed` runs in
+its own earlier, short transaction instead. Routing Service's `notification_consumer.py` (the
+Configuration Service call) and Email Service's `routed_consumer.py` (the simulated delivery
+latency) both do this; Notification Service's two consumers do not need to, and keep all four
+together. In every case the real backstop against a duplicate state change is not the advisory
+`is_processed` check but the `UNIQUE (notification_id)` constraint from correction 3.6 — see ADR
+0023.
 
 ---
 
@@ -396,9 +407,10 @@ integration tests in section 10 assert it directly.
 4. Routing Service outbox publisher: `XADD notification.routed`.
 5. Concurrently, no ordering guaranteed:
    - `notification-service-routed`: `SET status='PROCESSING' WHERE status='CREATED'` → `XACK`.
-   - `email-service`: filter `channel == "email"` → idempotency check →
-     `INSERT email_delivery (SENDING)` → simulate delivery → `UPDATE ... DELIVERED` →
-     `INSERT outbox (delivery.completed)` → `mark_processed` → commit → `XACK`.
+   - `email-service`: filter `channel == "email"` → idempotency check → simulate delivery →
+     `INSERT email_delivery` in its terminal state (`DELIVERED`) →
+     `INSERT outbox (delivery.completed)` → `mark_processed` → commit → `XACK`. The row is
+     inserted once, already terminal — see ADR 0022 for why.
 6. Email Service outbox publisher: `XADD delivery.completed`.
 7. `notification-service-results`: `SET status='COMPLETED' WHERE status IN ('CREATED','PROCESSING')`
    → `XACK`. `routing-service-results`: `SET routes.status='COMPLETED'` → `XACK`.
@@ -511,7 +523,8 @@ Seeded by Alembic data migration: `email = true`, `telegram = true`. No outbox, 
 ```
 email_delivery
   id, notification_id UNIQUE NOT NULL, recipient,
-  status      VARCHAR NOT NULL   -- SENDING | DELIVERED | FAILED
+  status      VARCHAR NOT NULL   -- DELIVERED | FAILED (inserted already terminal; SENDING is
+                                  -- a defined but unwritten enum member, see ADR 0022)
   fail_reason VARCHAR (nullable)
   sent_at     TIMESTAMP (nullable)
   created_at, updated_at

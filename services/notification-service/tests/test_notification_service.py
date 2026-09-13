@@ -1,6 +1,8 @@
 from uuid import uuid4
 
 import pytest
+from alembic import command
+from alembic.config import Config
 from app.core.config import Settings
 from app.core.database import Database
 from app.main import create_app
@@ -14,6 +16,8 @@ from notification_shared.streams import RedisStreamPublisher
 from sqlalchemy import func, select
 
 pytestmark = pytest.mark.integration
+
+ALEMBIC_DIR = "services/notification-service"
 
 VALID_BODY = {
     "channel": "email",
@@ -100,7 +104,9 @@ async def test_a_new_notification_starts_in_created(client, sessions):
     ],
 )
 async def test_invalid_payloads_are_rejected_and_write_nothing(client, sessions, payload):
-    assert (await client.post("/notifications", json=payload)).status_code == 422
+    response = await client.post("/notifications", json=payload)
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "VALIDATION_ERROR"
     async with sessions() as session:
         assert await session.scalar(select(func.count()).select_from(Notification)) == 0
         assert await session.scalar(select(func.count()).select_from(Outbox)) == 0
@@ -163,3 +169,40 @@ async def test_the_outbox_publisher_delivers_the_created_event(client, sessions,
 async def test_health_reports_both_database_and_redis(client):
     body = (await client.get("/health")).json()
     assert set(body["checks"]) == {"database", "redis"}
+
+
+def test_alembic_upgrade_head_matches_the_models(postgres_url):
+    """Synchronous on purpose: alembic's env.py calls asyncio.run internally,
+    which cannot be nested inside a running event loop.
+
+    Pins migrations against models (spec 10.2, 16): `alembic upgrade head`
+    must leave the database in exactly the state `Base.metadata` describes,
+    not merely a state that happens to work. Autogenerate's own comparison
+    is the mechanism, so drift between a migration and a model shows up as a
+    non-empty diff instead of silently passing.
+    """
+    config = Config(f"{ALEMBIC_DIR}/alembic.ini")
+    config.set_main_option("script_location", f"{ALEMBIC_DIR}/alembic")
+    config.set_main_option("sqlalchemy.url", postgres_url)
+    command.upgrade(config, "head")
+    try:
+        import asyncio
+
+        from alembic.autogenerate import compare_metadata
+        from alembic.runtime.migration import MigrationContext
+        from sqlalchemy.ext.asyncio import create_async_engine
+
+        def _compare(sync_connection):
+            context = MigrationContext.configure(sync_connection)
+            return compare_metadata(context, Base.metadata)
+
+        async def _diff():
+            engine = create_async_engine(postgres_url)
+            async with engine.connect() as conn:
+                result = await conn.run_sync(_compare)
+            await engine.dispose()
+            return result
+
+        assert asyncio.run(_diff()) == []
+    finally:
+        command.downgrade(config, "base")

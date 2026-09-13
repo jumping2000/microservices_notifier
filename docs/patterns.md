@@ -42,7 +42,16 @@ second time beyond acking it.
 (`IdempotencyRepository.is_processed` / `.mark_processed`), backed by the `processed_events` table
 materialized from `ProcessedEventMixin`. Every consumer handler in every service calls
 `is_processed` before doing any work and `mark_processed` inside the same commit as the state
-change — for example `services/notification-service/app/workers/routed_consumer.py`'s `_handle`.
+change — *except* where the handler must do slow I/O before it can decide what the state change
+even is. Notification Service's two consumers
+(`services/notification-service/app/workers/routed_consumer.py` and `results_consumer.py`) keep
+all four — the check, the state change, the outbox row, and the mark — in one transaction, because
+neither does anything slower than a local write between the check and the decision. Routing
+Service's `notification_consumer.py` and Email Service's `routed_consumer.py` do not: each opens a
+first, short transaction to run `is_processed`, closes it, then does the slow thing a transaction
+must never be held open across — an HTTP call to Configuration Service, or the simulated delivery
+latency sleep — before opening a second transaction for the state change, the outbox row and the
+mark. See ADR 0023 for why this is correct rather than a bug, and the cost it carries forward.
 
 **What breaks without it.** At-least-once delivery (the next pattern) guarantees duplicates will
 happen — the outbox publisher itself can `XADD` the same event twice if it crashes between the

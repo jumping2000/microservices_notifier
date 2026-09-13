@@ -91,7 +91,9 @@ async def test_put_on_an_unknown_channel_returns_404(client, sessions):
 
 async def test_put_rejects_a_body_without_enabled(client, sessions):
     await _seed(sessions)
-    assert (await client.put("/channels/email", json={})).status_code == 422
+    response = await client.put("/channels/email", json={})
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "VALIDATION_ERROR"
 
 
 async def test_health_reports_the_database_up(client, sessions):

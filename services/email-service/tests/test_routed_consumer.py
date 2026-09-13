@@ -1,6 +1,8 @@
 from uuid import uuid4
 
 import pytest
+from alembic import command
+from alembic.config import Config
 from app.models.base import Base
 from app.models.email_delivery import DeliveryStatus, EmailDelivery
 from app.models.outbox import Outbox
@@ -16,6 +18,8 @@ from notification_shared.streams import RedisStreamPublisher
 from sqlalchemy import func, select
 
 pytestmark = pytest.mark.integration
+
+ALEMBIC_DIR = "services/email-service"
 
 
 def _routed_event(channel: str = "email", recipient: str = "john@example.com") -> EventEnvelope:
@@ -191,3 +195,40 @@ async def test_the_notification_id_unique_constraint_blocks_a_second_delivery(se
                 )
             )
             await session.commit()
+
+
+def test_alembic_upgrade_head_matches_the_models(postgres_url):
+    """Synchronous on purpose: alembic's env.py calls asyncio.run internally,
+    which cannot be nested inside a running event loop.
+
+    Pins migrations against models (spec 10.2, 16): `alembic upgrade head`
+    must leave the database in exactly the state `Base.metadata` describes,
+    not merely a state that happens to work. Autogenerate's own comparison
+    is the mechanism, so drift between a migration and a model shows up as a
+    non-empty diff instead of silently passing.
+    """
+    config = Config(f"{ALEMBIC_DIR}/alembic.ini")
+    config.set_main_option("script_location", f"{ALEMBIC_DIR}/alembic")
+    config.set_main_option("sqlalchemy.url", postgres_url)
+    command.upgrade(config, "head")
+    try:
+        import asyncio
+
+        from alembic.autogenerate import compare_metadata
+        from alembic.runtime.migration import MigrationContext
+        from sqlalchemy.ext.asyncio import create_async_engine
+
+        def _compare(sync_connection):
+            context = MigrationContext.configure(sync_connection)
+            return compare_metadata(context, Base.metadata)
+
+        async def _diff():
+            engine = create_async_engine(postgres_url)
+            async with engine.connect() as conn:
+                result = await conn.run_sync(_compare)
+            await engine.dispose()
+            return result
+
+        assert asyncio.run(_diff()) == []
+    finally:
+        command.downgrade(config, "base")

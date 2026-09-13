@@ -150,6 +150,9 @@ services:
       REDIS_URL: redis://redis:6379/0
       SERVICE_NAME: email-service
       LOG_LEVEL: INFO
+      # The e2e tier relies on a delivery slow enough that PROCESSING is
+      # reliably observable at a 250ms poll interval.
+      DELIVERY_LATENCY_MS_MAX: "2000"
     ports: ["8004:8000"]
     networks: [notification-net]
     restart: on-failure

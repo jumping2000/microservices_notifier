@@ -39,6 +39,30 @@ async def test_a_500_raises_service_unavailable():
         await client.aclose()
 
 
+async def test_a_422_raises_service_unavailable():
+    """A non-404 4xx must not be handed back as if it were a successful body.
+
+    Without this, `{"detail": [...]}` would be returned to `_decide`, which
+    does `state["enabled"]` on it and raises an unhandled `KeyError` several
+    frames away — safe only by accident.
+    """
+    client = _client(lambda _r: httpx.Response(422, json={"detail": ["bad payload"]}))
+    try:
+        with pytest.raises(ServiceUnavailableError):
+            await client.get("/channels/email")
+    finally:
+        await client.aclose()
+
+
+async def test_a_403_raises_service_unavailable():
+    client = _client(lambda _r: httpx.Response(403, json={}))
+    try:
+        with pytest.raises(ServiceUnavailableError):
+            await client.get("/channels/email")
+    finally:
+        await client.aclose()
+
+
 async def test_a_timeout_raises_service_unavailable():
     def handler(request):
         raise httpx.ReadTimeout("too slow", request=request)

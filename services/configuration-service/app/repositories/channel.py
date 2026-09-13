@@ -11,3 +11,12 @@ class ChannelRepository:
 
     async def get(self, session: AsyncSession, name: str) -> ChannelConfig | None:
         return await session.get(ChannelConfig, name)
+
+    async def set_enabled(
+        self, session: AsyncSession, name: str, enabled: bool
+    ) -> ChannelConfig | None:
+        row = await self.get(session, name)
+        if row is None:
+            return None
+        row.enabled = enabled
+        return row

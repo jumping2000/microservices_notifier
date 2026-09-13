@@ -2,6 +2,8 @@ from uuid import uuid4
 
 import httpx
 import pytest
+from alembic import command
+from alembic.config import Config
 from app.models.base import Base
 from app.models.outbox import Outbox
 from app.models.processed_event import ProcessedEvent
@@ -18,6 +20,8 @@ from notification_shared.streams import RedisStreamPublisher
 from sqlalchemy import func, select
 
 pytestmark = pytest.mark.integration
+
+ALEMBIC_DIR = "services/routing-service"
 
 
 def _created_event(channel: str = "email") -> EventEnvelope:
@@ -55,6 +59,10 @@ def _absent(_request):
 
 def _unavailable(_request):
     return httpx.Response(503, text="")
+
+
+def _malformed(_request):
+    return httpx.Response(422, json={"detail": ["bad request"]})
 
 
 @pytest.fixture
@@ -173,6 +181,29 @@ async def test_configuration_unavailable_writes_nothing_and_leaves_the_message_p
     assert pending["pending"] == 1
 
 
+async def test_a_422_from_configuration_writes_nothing_and_leaves_the_message_pending(
+    make_consumer, sessions, redis_client
+):
+    """A non-404 4xx must be treated the same as an outage, not as success.
+
+    Without F6's fix, ServiceClient would hand `{"detail": [...]}` back as if
+    it were a decoded `{"enabled": ...}` body; `_decide` would then raise an
+    unhandled `KeyError` doing `state["enabled"]`, which happens to be
+    swallowed by `run_forever`'s bare `except Exception` — safe by accident.
+    Symmetrical with the 503 case above.
+    """
+    consumer = make_consumer(_malformed)
+    await consumer.ensure_groups()
+    await _publish(redis_client, _created_event())
+
+    assert await consumer.consume_once() == 0
+
+    async with sessions() as session:
+        assert await session.scalar(select(func.count()).select_from(Route)) == 0
+        assert await session.scalar(select(func.count()).select_from(Outbox)) == 0
+        assert await session.scalar(select(func.count()).select_from(ProcessedEvent)) == 0
+
+
 async def test_a_configuration_timeout_behaves_the_same_as_a_5xx(
     make_consumer, sessions, redis_client
 ):
@@ -274,3 +305,40 @@ async def test_the_notification_id_unique_constraint_blocks_a_second_route(sessi
                 )
             )
             await session.commit()
+
+
+def test_alembic_upgrade_head_matches_the_models(postgres_url):
+    """Synchronous on purpose: alembic's env.py calls asyncio.run internally,
+    which cannot be nested inside a running event loop.
+
+    Pins migrations against models (spec 10.2, 16): `alembic upgrade head`
+    must leave the database in exactly the state `Base.metadata` describes,
+    not merely a state that happens to work. Autogenerate's own comparison
+    is the mechanism, so drift between a migration and a model shows up as a
+    non-empty diff instead of silently passing.
+    """
+    config = Config(f"{ALEMBIC_DIR}/alembic.ini")
+    config.set_main_option("script_location", f"{ALEMBIC_DIR}/alembic")
+    config.set_main_option("sqlalchemy.url", postgres_url)
+    command.upgrade(config, "head")
+    try:
+        import asyncio
+
+        from alembic.autogenerate import compare_metadata
+        from alembic.runtime.migration import MigrationContext
+        from sqlalchemy.ext.asyncio import create_async_engine
+
+        def _compare(sync_connection):
+            context = MigrationContext.configure(sync_connection)
+            return compare_metadata(context, Base.metadata)
+
+        async def _diff():
+            engine = create_async_engine(postgres_url)
+            async with engine.connect() as conn:
+                result = await conn.run_sync(_compare)
+            await engine.dispose()
+            return result
+
+        assert asyncio.run(_diff()) == []
+    finally:
+        command.downgrade(config, "base")

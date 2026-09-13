@@ -17,8 +17,9 @@ from app.core.database import Database
 from app.models.outbox import Outbox
 from app.workers.routed_consumer import RoutedConsumer
 from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from notification_shared.exceptions import ServiceError
+from notification_shared.exceptions import ServiceError, ValidationFailedError
 from notification_shared.logging import configure_logging
 from notification_shared.middleware import CorrelationIDMiddleware
 from notification_shared.outbox import OutboxRepository
@@ -76,6 +77,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def handle_service_error(_request: Request, exc: ServiceError) -> JSONResponse:
         return JSONResponse(
             status_code=exc.status_code, content=exc.to_response().model_dump(mode="json")
+        )
+
+    @app.exception_handler(RequestValidationError)
+    async def handle_validation_error(
+        _request: Request, exc: RequestValidationError
+    ) -> JSONResponse:
+        # Spec 6.5: validation failures use the common error model, not
+        # FastAPI's default {"detail": [...]}.
+        error = ValidationFailedError(str(exc.errors()))
+        return JSONResponse(
+            status_code=error.status_code,
+            content=error.to_response().model_dump(mode="json"),
         )
 
     return app
