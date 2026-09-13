@@ -16,6 +16,7 @@ from app.core.config import Settings
 from app.core.database import Database
 from app.models.outbox import Outbox
 from app.workers.notification_consumer import NotificationCreatedConsumer
+from app.workers.results_consumer import ResultsConsumer
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from notification_shared.exceptions import ServiceError
@@ -51,6 +52,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         await consumer.ensure_groups()
 
+        results = ResultsConsumer(
+            session_factory=app.state.db.session_factory,
+            redis=app.state.redis,
+            consumer_name=f"{socket.gethostname()}-results",
+            poll_interval_ms=settings.consumer_poll_interval_ms,
+        )
+        await results.ensure_groups()
+
         publisher = OutboxPublisher(
             session_factory=app.state.db.session_factory,
             repository=OutboxRepository(Outbox),
@@ -61,6 +70,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         tasks = [
             asyncio.create_task(consumer.run_forever(), name="notification-consumer"),
+            asyncio.create_task(results.run_forever(), name="results-consumer"),
             asyncio.create_task(publisher.run_forever(), name="outbox-publisher"),
         ]
 
