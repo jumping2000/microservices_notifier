@@ -1,8 +1,9 @@
 from collections.abc import Sequence
+from datetime import timedelta
 from uuid import UUID
 
-from app.models.notification import Notification
-from sqlalchemy import select, update
+from app.models.notification import PROCESSING_TIMEOUT, Notification, NotificationStatus
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -50,5 +51,21 @@ class NotificationRepository:
                 Notification.status.in_(list(allowed_from)),
             )
             .values(status=new_status, fail_reason=fail_reason)
+        )
+        return result.rowcount
+
+    async def fail_stale_processing(self, session: AsyncSession, timeout_minutes: int) -> int:
+        """The watchdog's guarded update (slice 1 spec 3.16, slice 2 spec 2.7).
+
+        `now()` is the database's clock, so skew between containers cannot
+        matter. Only PROCESSING rows match, so a terminal state never changes.
+        """
+        result = await session.execute(
+            update(Notification)
+            .where(
+                Notification.status == NotificationStatus.PROCESSING.value,
+                Notification.updated_at < func.now() - timedelta(minutes=timeout_minutes),
+            )
+            .values(status=NotificationStatus.FAILED.value, fail_reason=PROCESSING_TIMEOUT)
         )
         return result.rowcount

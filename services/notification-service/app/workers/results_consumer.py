@@ -16,6 +16,7 @@ from notification_shared.context import set_correlation_id
 from notification_shared.events import ConsumerGroup, EventEnvelope, EventType, Stream
 from notification_shared.idempotency import IdempotencyRepository
 from notification_shared.streams import RedisStreamConsumer
+from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,7 @@ class ResultsConsumer:
         for stream in STREAMS:
             messages = await self._consumer.read(stream, GROUP, block_ms=self._poll_interval_ms)
             for message in messages:
-                if await self._handle(message.envelope):
+                if await self.handle(message.envelope):
                     await self._consumer.ack(stream, GROUP, message.message_id)
                     acked += 1
         return acked
@@ -58,7 +59,7 @@ class ResultsConsumer:
                 logger.exception("results consumer iteration failed")
                 await asyncio.sleep(self._poll_interval_ms / 1000)
 
-    async def _handle(self, envelope: EventEnvelope) -> bool:
+    async def handle(self, envelope: EventEnvelope) -> bool:
         set_correlation_id(envelope.correlation_id)
         log_fields = {
             "event_id": envelope.event_id,
@@ -94,3 +95,11 @@ class ResultsConsumer:
         else:
             logger.debug("notification already terminal or absent, acking", extra=log_fields)
         return True
+
+    async def give_up(self, session: AsyncSession, envelope: EventEnvelope) -> None:
+        """PendingRecoverer hook after PENDING_MAX_RETRIES failed attempts.
+
+        Nothing to write or publish: this service owns the notification, so
+        there is no one to tell. A notification left PROCESSING is closed by
+        the watchdog (slice 2 spec 2.6).
+        """

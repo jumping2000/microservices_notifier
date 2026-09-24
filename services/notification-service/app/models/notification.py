@@ -15,6 +15,10 @@ class NotificationStatus(StrEnum):
     FAILED = "FAILED"
 
 
+# fail_reason written by the stale-processing watchdog. ADR 0028.
+PROCESSING_TIMEOUT = "processing_timeout"
+
+
 class Notification(Base, TimestampMixin):
     __tablename__ = "notifications"
 
