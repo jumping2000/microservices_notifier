@@ -15,15 +15,19 @@ from app.api.v1.router import router
 from app.core.config import Settings
 from app.core.database import Database
 from app.models.outbox import Outbox
+from app.models.processed_event import ProcessedEvent
 from app.workers.routed_consumer import RoutedConsumer
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from notification_shared.events import ConsumerGroup, Stream
 from notification_shared.exceptions import ServiceError, ValidationFailedError
+from notification_shared.idempotency import IdempotencyRepository
 from notification_shared.logging import configure_logging
 from notification_shared.middleware import CorrelationIDMiddleware
 from notification_shared.outbox import OutboxRepository
 from notification_shared.publisher import OutboxPublisher
+from notification_shared.recovery import PendingRecoverer
 from notification_shared.streams import RedisStreamPublisher
 from starlette.requests import Request
 
@@ -56,9 +60,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             batch_size=settings.outbox_batch_size,
         )
 
+        recoverer = PendingRecoverer(
+            redis=app.state.redis,
+            consumer_name=f"{socket.gethostname()}-recovery",
+            session_factory=app.state.db.session_factory,
+            idempotency=IdempotencyRepository(ProcessedEvent),
+            pending_timeout_ms=settings.pending_timeout_ms,
+            max_retries=settings.pending_max_retries,
+            poll_interval_ms=settings.recovery_poll_interval_ms,
+        )
+        recoverer.register(Stream.NOTIFICATION_ROUTED, ConsumerGroup.EMAIL, consumer)
+
         tasks = [
             asyncio.create_task(consumer.run_forever(), name="routed-consumer"),
             asyncio.create_task(publisher.run_forever(), name="outbox-publisher"),
+            asyncio.create_task(recoverer.run_forever(), name="pending-recoverer"),
         ]
 
         yield

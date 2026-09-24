@@ -197,6 +197,31 @@ async def test_the_notification_id_unique_constraint_blocks_a_second_delivery(se
             await session.commit()
 
 
+async def test_give_up_records_a_failed_delivery_and_publishes_delivery_failed(consumer, sessions):
+    event = _routed_event()
+
+    async with sessions() as session:
+        await consumer.give_up(session, event)
+        await session.commit()
+
+    async with sessions() as session:
+        delivery = (await session.scalars(select(EmailDelivery))).one()
+        assert delivery.notification_id == event.aggregate_id
+        assert delivery.status == DeliveryStatus.FAILED
+        assert delivery.fail_reason == "max_retries_exceeded"
+        assert delivery.sent_at is None
+
+        outbox_row = (await session.scalars(select(Outbox))).one()
+        assert outbox_row.stream == "delivery.failed"
+        published = EventEnvelope.model_validate(outbox_row.payload)
+        assert published.event_type is EventType.DELIVERY_FAILED
+        assert published.payload["reason"] == "max_retries_exceeded"
+        assert published.payload["delivery_id"] == str(delivery.id)
+
+        # give_up does not mark processed; the recoverer does, in the same txn.
+        assert await session.scalar(select(func.count()).select_from(ProcessedEvent)) == 0
+
+
 def test_alembic_upgrade_head_matches_the_models(postgres_url):
     """Synchronous on purpose: alembic's env.py calls asyncio.run internally,
     which cannot be nested inside a running event loop.
