@@ -7,6 +7,7 @@ from app.models.base import Base
 from app.models.email_delivery import DeliveryStatus, EmailDelivery
 from app.models.outbox import Outbox
 from app.models.processed_event import ProcessedEvent
+from app.senders import EmailRejectedError, EmailUnavailableError
 from app.workers.routed_consumer import RoutedConsumer
 from notification_shared.events import (
     ConsumerGroup,
@@ -220,6 +221,101 @@ async def test_give_up_records_a_failed_delivery_and_publishes_delivery_failed(c
 
         # give_up does not mark processed; the recoverer does, in the same txn.
         assert await session.scalar(select(func.count()).select_from(ProcessedEvent)) == 0
+
+
+class RecordingSender:
+    """Stands in for a real sender; records who it was asked to reach."""
+
+    mode = "smtp"
+
+    def __init__(self, error: Exception | None = None) -> None:
+        self.sent: list[str] = []
+        self.error = error
+
+    async def send(self, recipient, subject, body) -> None:
+        if self.error:
+            raise self.error
+        self.sent.append(recipient)
+
+
+def _real_consumer(sessions, redis_client, sender) -> RoutedConsumer:
+    return RoutedConsumer(
+        session_factory=sessions,
+        redis=redis_client,
+        consumer_name="email-real",
+        poll_interval_ms=10,
+        delivery_latency_ms_max=0,
+        sender=sender,
+    )
+
+
+async def _only_delivery(sessions):
+    async with sessions() as session:
+        return (await session.scalars(select(EmailDelivery))).one()
+
+
+async def test_a_reserved_recipient_never_reaches_the_configured_sender(sessions, redis_client):
+    sender = RecordingSender()
+    consumer = _real_consumer(sessions, redis_client, sender)
+    await consumer.ensure_groups()
+    await _publish(redis_client, _routed_event(recipient="john@example.com"))
+
+    assert await consumer.consume_once() == 1
+    assert sender.sent == []
+    assert (await _only_delivery(sessions)).status == DeliveryStatus.DELIVERED
+
+
+async def test_a_real_recipient_goes_to_the_configured_sender(sessions, redis_client):
+    sender = RecordingSender()
+    consumer = _real_consumer(sessions, redis_client, sender)
+    await consumer.ensure_groups()
+    await _publish(redis_client, _routed_event(recipient="john@gmail.com"))
+
+    assert await consumer.consume_once() == 1
+    assert sender.sent == ["john@gmail.com"]
+    assert (await _only_delivery(sessions)).status == DeliveryStatus.DELIVERED
+
+
+async def test_the_failure_marker_precedes_the_real_sender(sessions, redis_client):
+    """Review Focus 1."""
+    sender = RecordingSender()
+    consumer = _real_consumer(sessions, redis_client, sender)
+    await consumer.ensure_groups()
+    await _publish(redis_client, _routed_event(recipient="failla@gmail.com"))
+
+    await consumer.consume_once()
+    assert sender.sent == []
+    delivery = await _only_delivery(sessions)
+    assert (delivery.status, delivery.fail_reason) == (DeliveryStatus.FAILED, "simulated_failure")
+
+
+async def test_an_smtp_rejection_fails_with_smtp_rejected(sessions, redis_client):
+    consumer = _real_consumer(sessions, redis_client, RecordingSender(EmailRejectedError("550")))
+    await consumer.ensure_groups()
+    await _publish(redis_client, _routed_event(recipient="john@gmail.com"))
+
+    assert await consumer.consume_once() == 1
+    delivery = await _only_delivery(sessions)
+    assert (delivery.status, delivery.fail_reason) == (DeliveryStatus.FAILED, "smtp_rejected")
+    async with sessions() as session:
+        outbox_row = (await session.scalars(select(Outbox))).one()
+        published = EventEnvelope.model_validate(outbox_row.payload)
+    assert published.payload["reason"] == "smtp_rejected"
+
+
+async def test_a_transient_smtp_failure_writes_nothing_and_stays_pending(sessions, redis_client):
+    consumer = _real_consumer(sessions, redis_client, RecordingSender(EmailUnavailableError("451")))
+    await consumer.ensure_groups()
+    await _publish(redis_client, _routed_event(recipient="john@gmail.com"))
+
+    with pytest.raises(EmailUnavailableError):
+        await consumer.consume_once()
+
+    async with sessions() as session:
+        assert await session.scalar(select(func.count()).select_from(EmailDelivery)) == 0
+        assert await session.scalar(select(func.count()).select_from(Outbox)) == 0
+    pending = await redis_client.xpending(str(Stream.NOTIFICATION_ROUTED), str(ConsumerGroup.EMAIL))
+    assert pending["pending"] == 1
 
 
 def test_alembic_upgrade_head_matches_the_models(postgres_url):

@@ -1,3 +1,4 @@
+from app.senders import delivery_mode
 from fastapi import APIRouter, Response
 from starlette.requests import Request
 
@@ -27,7 +28,11 @@ async def health(request: Request, response: Response) -> dict:
     }
 
 
-@router.get("/version", summary="Service version")
+@router.get("/version", summary="Service version and delivery mode")
 async def version(request: Request) -> dict:
     settings = request.app.state.settings
-    return {"service": settings.service_name, "version": settings.service_version}
+    return {
+        "service": settings.service_name,
+        "version": settings.service_version,
+        "delivery_mode": delivery_mode(settings),
+    }

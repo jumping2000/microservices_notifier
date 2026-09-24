@@ -1,15 +1,15 @@
 """Consumes notification.routed and delivers email.
 
-Delivery is simulated. Failure is deterministic rather than random so the
-behaviour can be tested and demonstrated: a recipient containing "fail" fails.
-See spec correction 3.8.
+Before any send, the shared rules apply in order (slice 2 spec section 3): a
+recipient containing "fail" fails deterministically, and a reserved recipient
+is always simulated. Everything else goes to the configured sender, simulated
+or SMTP (ADR 0029, ADR 0030).
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-import random
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -17,7 +17,13 @@ from app.models.email_delivery import DeliveryStatus, EmailDelivery
 from app.models.outbox import Outbox
 from app.models.processed_event import ProcessedEvent
 from app.repositories.email_delivery import EmailDeliveryRepository
+from app.senders import SMTP_REJECTED, EmailRejectedError, EmailSender, SimulatedSender
 from notification_shared.context import set_correlation_id
+from notification_shared.delivery import (
+    SIMULATED_FAILURE,
+    is_failure_recipient,
+    is_reserved_recipient,
+)
 from notification_shared.events import (
     Channel,
     ConsumerGroup,
@@ -35,7 +41,6 @@ logger = logging.getLogger(__name__)
 
 STREAM = Stream.NOTIFICATION_ROUTED
 GROUP = ConsumerGroup.EMAIL
-FAILURE_MARKER = "fail"
 
 
 class RoutedConsumer:
@@ -47,6 +52,7 @@ class RoutedConsumer:
         consumer_name: str,
         poll_interval_ms: int = 500,
         delivery_latency_ms_max: int = 500,
+        sender: EmailSender | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._consumer = RedisStreamConsumer(redis, consumer_name)
@@ -54,7 +60,9 @@ class RoutedConsumer:
         self._outbox = OutboxRepository(Outbox)
         self._idempotency = IdempotencyRepository(ProcessedEvent)
         self._poll_interval_ms = poll_interval_ms
-        self._latency_ms_max = delivery_latency_ms_max
+        # Reserved recipients always use the simulated sender, whatever is configured.
+        self._simulated = SimulatedSender(delivery_latency_ms_max)
+        self._sender = sender or self._simulated
 
     async def ensure_groups(self) -> None:
         await self._consumer.ensure_group(STREAM, GROUP)
@@ -184,10 +192,18 @@ class RoutedConsumer:
             )
 
     async def _deliver(self, recipient: str, subject: str | None, body: str) -> str | None:
-        """Simulated delivery. Returns None on success, or a failure reason."""
-        logger.info("sending email to %s", recipient)
-        if self._latency_ms_max:
-            await asyncio.sleep(random.uniform(0, self._latency_ms_max) / 1000)
-        if FAILURE_MARKER in recipient.lower():
-            return "simulated_failure"
+        """Returns None on success, or a permanent failure reason.
+
+        Raises EmailUnavailableError for a transient failure: nothing is
+        written, the message stays pending, PendingRecoverer retries it.
+        """
+        if is_failure_recipient(recipient):
+            return SIMULATED_FAILURE
+        reserved = is_reserved_recipient(Channel.EMAIL, recipient)
+        sender = self._simulated if reserved else self._sender
+        try:
+            await sender.send(recipient, subject, body)
+        except EmailRejectedError as exc:
+            logger.warning("email rejected by the server: %s", exc)
+            return SMTP_REJECTED
         return None
