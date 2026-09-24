@@ -51,3 +51,19 @@ def test_every_spec_error_code_exists():
         "STREAM_ERROR",
     ):
         assert ErrorCode[name].value == name
+
+
+def test_gateway_errors_carry_their_status_and_code():
+    from notification_shared.exceptions import BadGatewayError, GatewayTimeoutError
+
+    timeout = GatewayTimeoutError("GET /notifications timed out")
+    assert timeout.status_code == 504
+    assert timeout.to_response().model_dump(mode="json") == {
+        "error": {"code": "GATEWAY_TIMEOUT", "message": "GET /notifications timed out"}
+    }
+
+    bad = BadGatewayError("downstream unreachable")
+    assert bad.status_code == 502
+    assert bad.to_response().error.code == ErrorCode.BAD_GATEWAY
+    assert issubclass(GatewayTimeoutError, ServiceError)
+    assert issubclass(BadGatewayError, ServiceError)

@@ -20,6 +20,8 @@ class ErrorCode(StrEnum):
     CONFIGURATION_UNAVAILABLE = "CONFIGURATION_UNAVAILABLE"
     DELIVERY_UNAVAILABLE = "DELIVERY_UNAVAILABLE"
     STREAM_ERROR = "STREAM_ERROR"
+    GATEWAY_TIMEOUT = "GATEWAY_TIMEOUT"
+    BAD_GATEWAY = "BAD_GATEWAY"
 
 
 class ErrorDetail(BaseModel):
@@ -68,3 +70,19 @@ class ServiceUnavailableError(ServiceError):
         code: ErrorCode = ErrorCode.CONFIGURATION_UNAVAILABLE,
     ) -> None:
         super().__init__(code, message)
+
+
+class GatewayTimeoutError(ServiceError):
+    status_code = 504
+
+    def __init__(self, message: str) -> None:
+        super().__init__(ErrorCode.GATEWAY_TIMEOUT, message)
+
+
+class BadGatewayError(ServiceError):
+    """A downstream service could not be reached at all. ADR 0027."""
+
+    status_code = 502
+
+    def __init__(self, message: str) -> None:
+        super().__init__(ErrorCode.BAD_GATEWAY, message)
