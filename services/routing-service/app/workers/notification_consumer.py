@@ -27,7 +27,9 @@ from notification_shared.exceptions import NotFoundError, ServiceUnavailableErro
 from notification_shared.http_client import ServiceClient
 from notification_shared.idempotency import IdempotencyRepository
 from notification_shared.outbox import OutboxRepository
+from notification_shared.recovery import MAX_RETRIES_EXCEEDED
 from notification_shared.streams import RedisStreamConsumer
+from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +63,7 @@ class NotificationCreatedConsumer:
         messages = await self._consumer.read(STREAM, GROUP, block_ms=self._poll_interval_ms)
         acked = 0
         for message in messages:
-            if await self._handle(message.envelope):
+            if await self.handle(message.envelope):
                 await self._consumer.ack(STREAM, GROUP, message.message_id)
                 acked += 1
         return acked
@@ -76,7 +78,7 @@ class NotificationCreatedConsumer:
                 logger.exception("routing consumer iteration failed")
                 await asyncio.sleep(self._poll_interval_ms / 1000)
 
-    async def _handle(self, envelope: EventEnvelope) -> bool:
+    async def handle(self, envelope: EventEnvelope) -> bool:
         """Returns True when the message should be acked."""
         set_correlation_id(envelope.correlation_id)
         log_fields = {
@@ -95,8 +97,10 @@ class NotificationCreatedConsumer:
         try:
             fail_reason = await self._decide(channel)
         except ServiceUnavailableError as exc:
-            # Transient. Do not ack: the message stays pending for slice 2's
-            # XCLAIM recovery. An outage must never become a routing failure.
+            # Transient. Do not ack: the message stays pending and
+            # PendingRecoverer retries it after PENDING_TIMEOUT_MS, giving up
+            # after PENDING_MAX_RETRIES (slice 2 spec 2.3). An outage must
+            # never be recorded as an ordinary routing failure.
             logger.warning(
                 "configuration service unavailable, leaving message pending: %s",
                 exc,
@@ -105,56 +109,7 @@ class NotificationCreatedConsumer:
             return False
 
         async with self._session_factory() as session:
-            route = Route(
-                id=uuid4(),
-                notification_id=envelope.aggregate_id,
-                channel=channel,
-                status=(
-                    RouteStatus.PROCESSING.value
-                    if fail_reason is None
-                    else RouteStatus.FAILED.value
-                ),
-                fail_reason=fail_reason,
-            )
-            await self._routes.add(session, route)
-            await session.flush()
-
-            if fail_reason is None:
-                await self._outbox.save(
-                    session,
-                    Stream.NOTIFICATION_ROUTED,
-                    EventEnvelope.new(
-                        event_type=EventType.NOTIFICATION_ROUTED,
-                        aggregate_id=envelope.aggregate_id,
-                        payload={
-                            # Forwarded from NotificationCreated: the delivery
-                            # services cannot read this notification from
-                            # another service's database. See spec 3.20.
-                            "channel": channel,
-                            "recipient": envelope.payload["recipient"],
-                            "subject": envelope.payload.get("subject"),
-                            "body": envelope.payload["body"],
-                            "route_id": str(route.id),
-                        },
-                        correlation_id=envelope.correlation_id,
-                    ),
-                )
-            else:
-                await self._outbox.save(
-                    session,
-                    Stream.DELIVERY_FAILED,
-                    EventEnvelope.new(
-                        event_type=EventType.ROUTING_FAILED,
-                        aggregate_id=envelope.aggregate_id,
-                        payload={
-                            "channel": channel,
-                            "route_id": str(route.id),
-                            "reason": fail_reason,
-                        },
-                        correlation_id=envelope.correlation_id,
-                    ),
-                )
-
+            await self._record_decision(session, envelope, fail_reason)
             await self._idempotency.mark_processed(session, envelope.event_id, GROUP)
             await session.commit()
 
@@ -163,6 +118,65 @@ class NotificationCreatedConsumer:
             extra=log_fields,
         )
         return True
+
+    async def give_up(self, session: AsyncSession, envelope: EventEnvelope) -> None:
+        """PendingRecoverer hook after PENDING_MAX_RETRIES failed attempts.
+
+        Records the route as FAILED and publishes RoutingFailed, so the
+        notification goes CREATED -> FAILED instead of staying CREATED forever
+        (ADR 0024). No Configuration Service call: give_up must not fail for
+        the reason handle did.
+        """
+        await self._record_decision(session, envelope, MAX_RETRIES_EXCEEDED)
+
+    async def _record_decision(
+        self, session: AsyncSession, envelope: EventEnvelope, fail_reason: str | None
+    ) -> None:
+        """The route row and its outbox event. The caller owns the transaction."""
+        channel = envelope.payload["channel"]
+        route = Route(
+            id=uuid4(),
+            notification_id=envelope.aggregate_id,
+            channel=channel,
+            status=(
+                RouteStatus.PROCESSING.value if fail_reason is None else RouteStatus.FAILED.value
+            ),
+            fail_reason=fail_reason,
+        )
+        await self._routes.add(session, route)
+        await session.flush()
+
+        if fail_reason is None:
+            await self._outbox.save(
+                session,
+                Stream.NOTIFICATION_ROUTED,
+                EventEnvelope.new(
+                    event_type=EventType.NOTIFICATION_ROUTED,
+                    aggregate_id=envelope.aggregate_id,
+                    payload={
+                        # Forwarded from NotificationCreated: the delivery
+                        # services cannot read this notification from
+                        # another service's database. See spec 3.20.
+                        "channel": channel,
+                        "recipient": envelope.payload["recipient"],
+                        "subject": envelope.payload.get("subject"),
+                        "body": envelope.payload["body"],
+                        "route_id": str(route.id),
+                    },
+                    correlation_id=envelope.correlation_id,
+                ),
+            )
+        else:
+            await self._outbox.save(
+                session,
+                Stream.DELIVERY_FAILED,
+                EventEnvelope.new(
+                    event_type=EventType.ROUTING_FAILED,
+                    aggregate_id=envelope.aggregate_id,
+                    payload={"channel": channel, "route_id": str(route.id), "reason": fail_reason},
+                    correlation_id=envelope.correlation_id,
+                ),
+            )
 
     async def _decide(self, channel: str) -> str | None:
         """None means routable; a string is the RoutingFailed reason.

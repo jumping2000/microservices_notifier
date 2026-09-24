@@ -1,7 +1,7 @@
-from notification_shared.config import BaseServiceSettings
+from notification_shared.config import ConsumerServiceSettings
 
 
-class Settings(BaseServiceSettings):
+class Settings(ConsumerServiceSettings):
     service_name: str = "routing-service"
     database_url: str
     redis_url: str = "redis://redis:6379/0"

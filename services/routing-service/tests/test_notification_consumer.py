@@ -1,3 +1,4 @@
+import asyncio
 from uuid import uuid4
 
 import httpx
@@ -9,6 +10,7 @@ from app.models.outbox import Outbox
 from app.models.processed_event import ProcessedEvent
 from app.models.route import Route, RouteStatus
 from app.workers.notification_consumer import NotificationCreatedConsumer
+from app.workers.results_consumer import ResultsConsumer
 from notification_shared.events import (
     ConsumerGroup,
     EventEnvelope,
@@ -16,6 +18,8 @@ from notification_shared.events import (
     Stream,
 )
 from notification_shared.http_client import ServiceClient
+from notification_shared.idempotency import IdempotencyRepository, ProcessedStatus
+from notification_shared.recovery import PendingRecoverer
 from notification_shared.streams import RedisStreamPublisher
 from sqlalchemy import func, select
 
@@ -342,3 +346,99 @@ def test_alembic_upgrade_head_matches_the_models(postgres_url):
         assert asyncio.run(_diff()) == []
     finally:
         command.downgrade(config, "base")
+
+
+def _recoverer(sessions, redis_client, consumer) -> PendingRecoverer:
+    recoverer = PendingRecoverer(
+        redis=redis_client,
+        consumer_name="routing-recovery",
+        session_factory=sessions,
+        idempotency=IdempotencyRepository(ProcessedEvent),
+        pending_timeout_ms=20,
+        max_retries=3,
+        poll_interval_ms=10,
+    )
+    recoverer.register(Stream.NOTIFICATION_CREATED, ConsumerGroup.ROUTING, consumer)
+    return recoverer
+
+
+async def test_give_up_writes_a_failed_route_and_routing_failed(make_consumer, sessions):
+    consumer = make_consumer(_unavailable)
+    event = _created_event()
+
+    async with sessions() as session:
+        await consumer.give_up(session, event)
+        await session.commit()
+
+    async with sessions() as session:
+        route = (await session.scalars(select(Route))).one()
+        assert route.notification_id == event.aggregate_id
+        assert route.status == RouteStatus.FAILED
+        assert route.fail_reason == "max_retries_exceeded"
+
+        outbox_row = (await session.scalars(select(Outbox))).one()
+        assert outbox_row.stream == "delivery.failed"
+        published = EventEnvelope.model_validate(outbox_row.payload)
+        assert published.event_type is EventType.ROUTING_FAILED
+        assert published.payload["reason"] == "max_retries_exceeded"
+        assert published.payload["route_id"] == str(route.id)
+        assert published.correlation_id == "corr-route"
+
+
+async def test_a_persistent_outage_ends_in_routing_failed_after_max_retries(
+    make_consumer, sessions, redis_client
+):
+    """The whole slice 2 chain at the service tier: pending -> retries -> give-up."""
+    consumer = make_consumer(_unavailable)
+    await consumer.ensure_groups()
+    event = _created_event()
+    await _publish(redis_client, event)
+    assert await consumer.consume_once() == 0
+
+    recoverer = _recoverer(sessions, redis_client, consumer)
+    for _ in range(3):
+        await asyncio.sleep(0.05)
+        await recoverer.recover_once()
+
+    async with sessions() as session:
+        route = (await session.scalars(select(Route))).one()
+        assert (route.status, route.fail_reason) == (RouteStatus.FAILED, "max_retries_exceeded")
+        ledger = (
+            await session.execute(
+                select(ProcessedEvent.status, ProcessedEvent.fail_count).where(
+                    ProcessedEvent.event_id == event.event_id
+                )
+            )
+        ).one()
+        assert ledger == (ProcessedStatus.FAILED_PERMANENT, 3)
+    pending = await redis_client.xpending(
+        str(Stream.NOTIFICATION_CREATED), str(ConsumerGroup.ROUTING)
+    )
+    assert pending["pending"] == 0
+
+
+async def test_an_outage_that_ends_is_routed_by_recovery(make_consumer, sessions, redis_client):
+    await make_consumer(_unavailable).ensure_groups()
+    stranded = make_consumer(_unavailable)
+    event = _created_event()
+    await _publish(redis_client, event)
+    assert await stranded.consume_once() == 0
+
+    recovered = make_consumer(_enabled)
+    await asyncio.sleep(0.05)
+    assert await _recoverer(sessions, redis_client, recovered).recover_once() == 1
+
+    async with sessions() as session:
+        route = (await session.scalars(select(Route))).one()
+        assert route.status == RouteStatus.PROCESSING
+        assert (await session.scalars(select(Outbox))).one().stream == "notification.routed"
+
+
+async def test_the_results_consumer_gives_up_without_writing(sessions, redis_client):
+    results = ResultsConsumer(
+        session_factory=sessions, redis=redis_client, consumer_name="x", poll_interval_ms=10
+    )
+    async with sessions() as session:
+        await results.give_up(session, _created_event())
+        assert not session.new
+        assert not session.dirty
