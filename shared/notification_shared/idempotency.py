@@ -1,7 +1,8 @@
 """Idempotency ledger access.
 
-Both writers upsert, because `mark_processed` may find a FAILING row left by an
-earlier attempt at the same event.
+All three writers upsert, because each may find a FAILING row left by an
+earlier attempt at the same event. None of them resets `fail_count`: it is the
+history of how many attempts an event needed (slice 2 spec 2.4).
 """
 
 from __future__ import annotations
@@ -80,3 +81,24 @@ class IdempotencyRepository:
             .returning(self.model.fail_count)
         )
         return await session.scalar(stmt)
+
+    async def mark_failed_permanent(
+        self, session: AsyncSession, event_id: UUID, consumer_group: str
+    ) -> None:
+        """The recoverer gave up on this event. `is_processed` treats it as
+        terminal, so a replay is skipped rather than retried forever."""
+        stmt = (
+            pg_insert(self.model)
+            .values(
+                id=uuid4(),
+                event_id=event_id,
+                consumer_group=str(consumer_group),
+                status=ProcessedStatus.FAILED_PERMANENT.value,
+                fail_count=0,
+            )
+            .on_conflict_do_update(
+                index_elements=["event_id", "consumer_group"],
+                set_={"status": ProcessedStatus.FAILED_PERMANENT.value},
+            )
+        )
+        await session.execute(stmt)

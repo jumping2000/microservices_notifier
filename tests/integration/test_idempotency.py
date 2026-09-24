@@ -108,3 +108,56 @@ async def test_the_same_event_is_tracked_per_consumer_group(sessions):
     async with sessions() as session:
         assert await repo.is_processed(session, event_id, ConsumerGroup.ROUTING) is True
         assert await repo.is_processed(session, event_id, ConsumerGroup.EMAIL) is False
+
+
+async def _row(sessions, event_id):
+    async with sessions() as session:
+        return (
+            await session.execute(
+                select(ProcessedEvent.status, ProcessedEvent.fail_count).where(
+                    ProcessedEvent.event_id == event_id
+                )
+            )
+        ).one()
+
+
+async def test_mark_failed_permanent_counts_as_processed(sessions):
+    """A given-up event must be skipped on replay (spec 2.4)."""
+    repo = IdempotencyRepository(ProcessedEvent)
+    event_id = uuid4()
+    async with sessions() as session:
+        await repo.mark_failed_permanent(session, event_id, GROUP)
+        await session.commit()
+
+    async with sessions() as session:
+        assert await repo.is_processed(session, event_id, GROUP) is True
+    assert (await _row(sessions, event_id)).status == ProcessedStatus.FAILED_PERMANENT
+
+
+async def test_mark_failed_permanent_over_a_failing_row_keeps_the_count(sessions):
+    repo = IdempotencyRepository(ProcessedEvent)
+    event_id = uuid4()
+    async with sessions() as session:
+        for _ in range(3):
+            await repo.increment_fail_count(session, event_id, GROUP)
+        await repo.mark_failed_permanent(session, event_id, GROUP)
+        await session.commit()
+
+    row = await _row(sessions, event_id)
+    assert row.status == ProcessedStatus.FAILED_PERMANENT
+    assert row.fail_count == 3
+
+
+async def test_mark_processed_over_a_failing_row_keeps_the_count(sessions):
+    """Deliberate (spec 2.4): fail_count is the history of attempts."""
+    repo = IdempotencyRepository(ProcessedEvent)
+    event_id = uuid4()
+    async with sessions() as session:
+        await repo.increment_fail_count(session, event_id, GROUP)
+        await repo.increment_fail_count(session, event_id, GROUP)
+        await repo.mark_processed(session, event_id, GROUP)
+        await session.commit()
+
+    row = await _row(sessions, event_id)
+    assert row.status == ProcessedStatus.PROCESSED
+    assert row.fail_count == 2

@@ -3,6 +3,10 @@
 Groups are always created at offset 0 so that an event published before its
 consumer started is still delivered. Replay is safe because every consumer
 checks the idempotency ledger. See spec correction 3.2.
+
+`get_pending` and `claim` exist for `PendingRecoverer`: consumer names are
+container hostnames and change on restart, so a crashed consumer's pending
+entries can only be recovered by claiming them by idle time. Slice 2 spec 2.1.
 """
 
 from __future__ import annotations
@@ -18,6 +22,19 @@ from notification_shared.events import EventEnvelope
 class StreamMessage(NamedTuple):
     message_id: str
     envelope: EventEnvelope
+
+
+class PendingEntry(NamedTuple):
+    message_id: str
+    consumer: str
+    idle_ms: int
+    times_delivered: int
+
+
+class ClaimedMessage(NamedTuple):
+    message_id: str
+    # None when the entry cannot be parsed; the recoverer acks and discards it.
+    envelope: EventEnvelope | None
 
 
 def _as_str(value: Any) -> str:
@@ -67,3 +84,46 @@ class RedisStreamConsumer:
 
     async def ack(self, stream: str, group: str, message_id: str) -> None:
         await self._redis.xack(str(stream), str(group), message_id)
+
+    async def get_pending(
+        self, stream: str, group: str, min_idle_ms: int, count: int = 10
+    ) -> list[PendingEntry]:
+        """XPENDING with an IDLE filter. Slice 1 spec correction 3.5."""
+        rows = await self._redis.xpending_range(
+            str(stream), str(group), min="-", max="+", count=count, idle=min_idle_ms
+        )
+        return [
+            PendingEntry(
+                message_id=_as_str(row["message_id"]),
+                consumer=_as_str(row["consumer"]),
+                idle_ms=int(row["time_since_delivered"]),
+                times_delivered=int(row["times_delivered"]),
+            )
+            for row in rows
+        ]
+
+    async def claim(
+        self, stream: str, group: str, min_idle_ms: int, message_ids: list[str]
+    ) -> list[ClaimedMessage]:
+        """XCLAIM to this consumer. The same min_idle_ms as get_pending means an
+        entry another consumer picked up in the meantime is not stolen."""
+        if not message_ids:
+            return []
+        entries = await self._redis.xclaim(
+            str(stream),
+            str(group),
+            self._consumer_name,
+            min_idle_time=min_idle_ms,
+            message_ids=message_ids,
+        )
+        claimed: list[ClaimedMessage] = []
+        for message_id, fields in entries:
+            if message_id is None or not fields:
+                # Deleted from the stream since it was delivered.
+                continue
+            try:
+                envelope = EventEnvelope.from_redis(fields)
+            except ValueError:
+                envelope = None
+            claimed.append(ClaimedMessage(_as_str(message_id), envelope))
+        return claimed
