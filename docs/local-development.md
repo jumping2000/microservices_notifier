@@ -86,6 +86,23 @@ in-container hostnames used by `docker-compose.yml`. To use one:
 fails to start with a "relation does not exist" error under the debugger, migrations were not
 applied to that port's database first.
 
+## Playground dashboard
+
+`tools/playground/app.py` is a small Streamlit dashboard for driving the running stack by hand:
+service health, the channel toggles, a send form, one-click buttons for the three saga outcomes,
+a live status timeline for the last notification sent, and a filterable notification table. Its
+dependencies live in their own `playground` dependency group, so the test environment does not
+carry them:
+
+```bash
+docker compose up --build -d --wait
+uv run --group playground streamlit run tools/playground/app.py   # http://localhost:8501
+```
+
+It reads the same `NOTIFICATION_URL` / `ROUTING_URL` / `CONFIGURATION_URL` / `EMAIL_URL`
+variables as `tests/e2e`. The "Channel disabled" scenario turns email off and turns it back on
+only after the notification settles.
+
 ## Resetting
 
 ```bash
