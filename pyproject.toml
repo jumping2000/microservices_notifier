@@ -16,6 +16,10 @@ dev = [
     "ruff>=0.16.7",
     "fastapi>=0.141.1",
 ]
+playground = [
+    "httpx>=0.28.1",
+    "streamlit>=1.64.0",
+]
 
 [tool.ruff]
 line-length = 100

@@ -1,0 +1,356 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Notification Platform — architettura slice 1",
+    "output": "architecture.html",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "happy-path",
+        "label": "Saga felice",
+        "focus": [
+          "client",
+          "notification-service",
+          "redis",
+          "routing-service",
+          "email-service"
+        ],
+        "note": "Il percorso principale: POST /notifications, routing, consegna email."
+      },
+      {
+        "id": "config-dependency",
+        "label": "Dipendenza sincrona",
+        "focus": [
+          "client",
+          "routing-service",
+          "configuration-service",
+          "configurationdb"
+        ],
+        "note": "L'unica chiamata REST di dominio fra servizi: GET /channels/{name}."
+      },
+      {
+        "id": "persistence",
+        "label": "Un DB per servizio",
+        "focus": [
+          "notification-service",
+          "notificationdb",
+          "routing-service",
+          "routingdb",
+          "email-service",
+          "emaildb"
+        ],
+        "note": "Nessun servizio legge il database di un altro."
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "configurationdb",
+      "type": "database",
+      "label": "configurationdb",
+      "sublabel": "postgres:16 :5435",
+      "brand": "postgresql",
+      "pos": [
+        60,
+        120
+      ],
+      "size": [
+        200,
+        80
+      ]
+    },
+    {
+      "id": "configuration-service",
+      "type": "backend",
+      "label": "configuration-service",
+      "sublabel": "FastAPI :8003",
+      "tag": "stato dei canali",
+      "pos": [
+        360,
+        120
+      ],
+      "size": [
+        250,
+        110
+      ]
+    },
+    {
+      "id": "routing-service",
+      "type": "backend",
+      "label": "routing-service",
+      "sublabel": "FastAPI :8002",
+      "tag": "decisione di routing",
+      "pos": [
+        710,
+        120
+      ],
+      "size": [
+        250,
+        110
+      ]
+    },
+    {
+      "id": "routingdb",
+      "type": "database",
+      "label": "routingdb",
+      "sublabel": "postgres:16 :5434",
+      "brand": "postgresql",
+      "pos": [
+        1040,
+        120
+      ],
+      "size": [
+        200,
+        80
+      ]
+    },
+    {
+      "id": "client",
+      "type": "external",
+      "label": "Client",
+      "sublabel": "curl · test e2e",
+      "tag": "nessun API gateway",
+      "pos": [
+        60,
+        330
+      ],
+      "size": [
+        190,
+        110
+      ]
+    },
+    {
+      "id": "notification-service",
+      "type": "backend",
+      "label": "notification-service",
+      "sublabel": "FastAPI :8001",
+      "tag": "aggregato notification",
+      "pos": [
+        360,
+        330
+      ],
+      "size": [
+        250,
+        110
+      ]
+    },
+    {
+      "id": "redis",
+      "type": "messagebus",
+      "label": "Redis Streams",
+      "sublabel": "redis:7-alpine :6379",
+      "tag": "4 stream · 6 consumer group",
+      "brand": "redis",
+      "pos": [
+        710,
+        330
+      ],
+      "size": [
+        250,
+        110
+      ]
+    },
+    {
+      "id": "email-service",
+      "type": "backend",
+      "label": "email-service",
+      "sublabel": "FastAPI :8004",
+      "tag": "consegna simulata",
+      "pos": [
+        1040,
+        330
+      ],
+      "size": [
+        250,
+        110
+      ]
+    },
+    {
+      "id": "notificationdb",
+      "type": "database",
+      "label": "notificationdb",
+      "sublabel": "postgres:16 :5433",
+      "brand": "postgresql",
+      "pos": [
+        360,
+        520
+      ],
+      "size": [
+        250,
+        80
+      ]
+    },
+    {
+      "id": "emaildb",
+      "type": "database",
+      "label": "emaildb",
+      "sublabel": "postgres:16 :5436",
+      "brand": "postgresql",
+      "pos": [
+        1040,
+        520
+      ],
+      "size": [
+        250,
+        80
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "client-notifications",
+      "from": "client",
+      "to": "notification-service",
+      "label": "POST /notifications",
+      "variant": "emphasis",
+      "labelAt": [
+        305,
+        418
+      ]
+    },
+    {
+      "id": "client-channels",
+      "from": "client",
+      "to": "configuration-service",
+      "label": "PUT /channels/{name}"
+    },
+    {
+      "id": "routing-reads-config",
+      "from": "routing-service",
+      "to": "configuration-service",
+      "label": "GET /channels/{name} — sincrono",
+      "labelAt": [
+        660,
+        112
+      ]
+    },
+    {
+      "id": "cs-db",
+      "from": "configuration-service",
+      "to": "configurationdb",
+      "label": "asyncpg"
+    },
+    {
+      "id": "rs-db",
+      "from": "routing-service",
+      "to": "routingdb",
+      "label": "asyncpg"
+    },
+    {
+      "id": "ns-db",
+      "from": "notification-service",
+      "to": "notificationdb",
+      "label": "asyncpg",
+      "labelAt": [
+        485,
+        480
+      ]
+    },
+    {
+      "id": "es-db",
+      "from": "email-service",
+      "to": "emaildb",
+      "label": "asyncpg",
+      "labelAt": [
+        1165,
+        480
+      ]
+    },
+    {
+      "id": "ns-publishes",
+      "from": "notification-service",
+      "to": "redis",
+      "label": "XADD notification.created",
+      "variant": "dashed",
+      "labelAt": [
+        660,
+        462
+      ]
+    },
+    {
+      "id": "ns-consumes",
+      "from": "redis",
+      "to": "notification-service",
+      "label": "XREADGROUP notification.routed + delivery.*",
+      "variant": "dashed",
+      "labelAt": [
+        660,
+        500
+      ]
+    },
+    {
+      "id": "rs-publishes",
+      "from": "routing-service",
+      "to": "redis",
+      "label": "XADD notification.routed + delivery.failed",
+      "variant": "dashed",
+      "labelAt": [
+        710,
+        262
+      ]
+    },
+    {
+      "id": "rs-consumes",
+      "from": "redis",
+      "to": "routing-service",
+      "label": "XREADGROUP notification.created + delivery.*",
+      "variant": "dashed",
+      "labelAt": [
+        970,
+        298
+      ]
+    },
+    {
+      "id": "es-publishes",
+      "from": "email-service",
+      "to": "redis",
+      "label": "XADD delivery.completed + delivery.failed",
+      "variant": "dashed",
+      "labelAt": [
+        1000,
+        462
+      ]
+    },
+    {
+      "id": "es-consumes",
+      "from": "redis",
+      "to": "email-service",
+      "label": "XREADGROUP notification.routed",
+      "variant": "dashed",
+      "labelAt": [
+        1000,
+        500
+      ]
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Superficie HTTP",
+      "items": [
+        "notification-service :8001 — POST /notifications, GET /{id}",
+        "configuration-service :8003 — GET e PUT /channels/{name}",
+        "routing-service, email-service: solo /health, /version, /docs"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Stream → consumer group",
+      "items": [
+        "notification.created → routing-service",
+        "notification.routed → email-service, notification-service-routed",
+        "delivery.completed e delivery.failed → i due gruppi -results"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "Pattern e limiti",
+      "items": [
+        "Coreografia: nessun orchestratore, outbox e poi XADD",
+        "Status guardati in SQL: WHERE status IN (...) (ADR 0016)",
+        "Slice 1: nessun recovery, nessun telegram-service, nessun gateway"
+      ]
+    }
+  ]
+}
