@@ -185,6 +185,29 @@ async def test_a_give_up_that_raises_rolls_back_and_stays_pending(redis_client, 
     assert await _pending_count(redis_client) == 1
 
 
+async def test_a_failed_handle_for_an_already_processed_event_is_acked_and_the_ledger_is_unchanged(
+    redis_client, sessions
+):
+    """Minor 2: increment_fail_count returns None for a terminal row; the
+    recoverer must treat that as already-done, not reopen it as FAILING."""
+    envelope = await _strand(redis_client)
+    async with sessions() as session:
+        await IdempotencyRepository(ProcessedEvent).mark_processed(
+            session, envelope.event_id, GROUP
+        )
+        await session.commit()
+
+    consumer = FakeConsumer([False])
+    recoverer = _recoverer(redis_client, sessions)
+    recoverer.register(STREAM, GROUP, consumer)
+
+    assert await recoverer.recover_once() == 1
+
+    assert await _ledger(sessions, envelope.event_id) == (ProcessedStatus.PROCESSED, 0)
+    assert consumer.given_up == []
+    assert await _pending_count(redis_client) == 0
+
+
 async def test_an_unparseable_entry_is_acked_and_discarded(redis_client, sessions):
     dead = RedisStreamConsumer(redis_client, consumer_name="dead")
     await dead.ensure_group(STREAM, GROUP)

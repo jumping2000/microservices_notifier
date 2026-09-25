@@ -130,6 +130,13 @@ class PendingRecoverer:
             )
             await session.commit()
 
+        if fail_count is None:
+            # The ledger row is already terminal (PROCESSED or
+            # FAILED_PERMANENT): some other attempt already finished this
+            # event. Ack without reopening it as FAILING.
+            logger.info("event already terminal in the ledger, acking", extra=log_fields)
+            return True
+
         if not should_give_up(fail_count, self._max_retries):
             logger.warning(
                 "attempt %d of %d failed, leaving entry pending",

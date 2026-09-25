@@ -148,6 +148,23 @@ async def test_mark_failed_permanent_over_a_failing_row_keeps_the_count(sessions
     assert row.fail_count == 3
 
 
+async def test_increment_over_a_processed_row_returns_none_and_leaves_it_processed(sessions):
+    """Minor 2: a terminal row must never be reopened as FAILING."""
+    repo = IdempotencyRepository(ProcessedEvent)
+    event_id = uuid4()
+    async with sessions() as session:
+        await repo.mark_processed(session, event_id, GROUP)
+        await session.commit()
+
+    async with sessions() as session:
+        assert await repo.increment_fail_count(session, event_id, GROUP) is None
+        await session.commit()
+
+    row = await _row(sessions, event_id)
+    assert row.status == ProcessedStatus.PROCESSED
+    assert row.fail_count == 0
+
+
 async def test_mark_processed_over_a_failing_row_keeps_the_count(sessions):
     """Deliberate (spec 2.4): fail_count is the history of attempts."""
     repo = IdempotencyRepository(ProcessedEvent)

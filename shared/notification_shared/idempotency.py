@@ -61,7 +61,10 @@ class IdempotencyRepository:
 
     async def increment_fail_count(
         self, session: AsyncSession, event_id: UUID, consumer_group: str
-    ) -> int:
+    ) -> int | None:
+        """Returns the new fail count, or None when the existing row is
+        already terminal (PROCESSED or FAILED_PERMANENT) and was left alone:
+        a terminal row must never be reopened as FAILING."""
         stmt = (
             pg_insert(self.model)
             .values(
@@ -77,6 +80,7 @@ class IdempotencyRepository:
                     "fail_count": self.model.fail_count + 1,
                     "status": ProcessedStatus.FAILING.value,
                 },
+                where=self.model.status == ProcessedStatus.FAILING.value,
             )
             .returning(self.model.fail_count)
         )
