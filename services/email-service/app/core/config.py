@@ -12,7 +12,8 @@ class Settings(ConsumerServiceSettings):
     outbox_poll_interval_ms: int = 500
     outbox_batch_size: int = 100
     delivery_latency_ms_max: int = 500
-    # SMTP connect timeout; reused rather than adding a separate variable.
+    # Timeout for every SMTP operation (connect, and each command/response);
+    # reused rather than adding a separate variable.
     http_timeout_seconds: float = 5.0
     # Empty SMTP_HOST means simulated delivery (ADR 0029).
     smtp_host: str = ""

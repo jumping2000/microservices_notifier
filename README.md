@@ -247,7 +247,7 @@ a local `.env` — see "Real delivery" above).
 | `PROCESSING_TIMEOUT_MINUTES` | `5` | notification-service | Yes |
 | `WATCHDOG_INTERVAL_SECONDS` | `60` | notification-service | Yes |
 | `CONFIGURATION_SERVICE_URL` | `http://configuration-service:8000` | routing-service, gateway | Yes |
-| `HTTP_TIMEOUT_SECONDS` | `5.0` | routing, telegram, email (SMTP connect timeout) | Yes |
+| `HTTP_TIMEOUT_SECONDS` | `5.0` | routing, telegram, email (timeout for every SMTP operation) | Yes |
 | `GATEWAY_TIMEOUT_SECONDS` | `10.0` | gateway | Yes |
 | `NOTIFICATION_SERVICE_URL` | `http://notification-service:8000` | gateway | Yes |
 | `DELIVERY_LATENCY_MS_MAX` | `500` | email, telegram (simulated sender) | Yes |
@@ -313,8 +313,9 @@ New in slice 2:
 - **Dead consumer names accumulate** in each group's `XINFO CONSUMERS` listing. Harmless; not
   cleaned up.
 - **At-least-once delivery now has a visible cost.** A crash after a real send but before the commit
-  sends the email or Telegram message twice. Idempotency protects the database, not the recipient's
-  inbox.
+  sends the email or Telegram message twice; so does a timeout after the server already accepted
+  the message but before the client saw the reply (an SMTP final reply, a Bot API read timeout).
+  Idempotency protects the database, not the recipient's inbox.
 - **Real SMTP and Bot API delivery are not exercised by any automated test** — they are covered by
   fake-server and `MockTransport` suites, and by manual use through the playground.
 - **Load test throughput is bounded by one consumer per group and the simulated delivery latency**;

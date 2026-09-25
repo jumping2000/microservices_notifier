@@ -46,6 +46,12 @@ surface for a reader to hold in their head, but it is where the responsibility a
 consumer that knows how to write its own failure row is also the one that knows how to write it
 after giving up.
 
+If `give_up` raises, `_recover` always calls `consumer.handle(envelope)` once more on the next
+cycle before re-checking the retry count and giving up again — `handle` runs unconditionally at the
+top of `_recover` regardless of how high `fail_count` already is. Spec 2.3's "the count is already
+at the limit, so it goes straight to give-up" describes the retry-count check, not an extra `handle`
+skip; the implementation still runs `handle` every cycle.
+
 Proof: `services/routing-service/tests/test_notification_consumer.py::test_a_persistent_outage_ends_in_routing_failed_after_max_retries`
 drives a consumer through `PENDING_MAX_RETRIES` failed attempts and asserts the route ends `FAILED`
 with a `RoutingFailed` outbox row carrying `max_retries_exceeded`.
