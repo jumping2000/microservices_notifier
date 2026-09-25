@@ -153,6 +153,13 @@ services:
       # The e2e tier relies on a delivery slow enough that PROCESSING is
       # reliably observable at a 250ms poll interval.
       DELIVERY_LATENCY_MS_MAX: "2000"
+      # Real SMTP only when SMTP_HOST is set in a local .env (see .env.example).
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      SMTP_SECURITY: ${SMTP_SECURITY:-starttls}
     ports: ["8004:8000"]
     networks: [notification-net]
     restart: on-failure
@@ -166,6 +173,69 @@ services:
       retries: 5
       start_period: 30s
 
+  telegram-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: notif
+      POSTGRES_PASSWORD: notif
+      POSTGRES_DB: telegramdb
+    ports: ["5437:5432"]
+    volumes: ["telegram-data:/var/lib/postgresql/data"]
+    networks: [notification-net]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U notif -d telegramdb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  telegram-service:
+    build:
+      context: .
+      dockerfile: services/telegram-service/Dockerfile
+    environment:
+      DATABASE_URL: postgresql+asyncpg://notif:notif@telegram-db:5432/telegramdb
+      REDIS_URL: redis://redis:6379/0
+      SERVICE_NAME: telegram-service
+      LOG_LEVEL: INFO
+      # Same reason as email-service: PROCESSING must be observable in e2e.
+      DELIVERY_LATENCY_MS_MAX: "2000"
+      # Real Bot API only when set in a local .env (see .env.example).
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+    ports: ["8005:8000"]
+    networks: [notification-net]
+    restart: on-failure
+    depends_on:
+      telegram-db: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  gateway:
+    build:
+      context: .
+      dockerfile: gateway/Dockerfile
+    environment:
+      NOTIFICATION_SERVICE_URL: http://notification-service:8000
+      CONFIGURATION_SERVICE_URL: http://configuration-service:8000
+      SERVICE_NAME: gateway
+      LOG_LEVEL: INFO
+    ports: ["8000:8000"]
+    networks: [notification-net]
+    restart: on-failure
+    depends_on:
+      notification-service: { condition: service_healthy }
+      configuration-service: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
 networks:
   notification-net:
 
@@ -174,4 +244,5 @@ volumes:
   notification-data:
   routing-data:
   email-data:
+  telegram-data:
   redis-data:

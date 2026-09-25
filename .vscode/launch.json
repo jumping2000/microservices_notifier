@@ -66,6 +66,38 @@
       "justMyCode": false
     },
     {
+      "name": "telegram-service",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": ["app.main:create_app", "--factory", "--port", "8005", "--reload"],
+      "cwd": "${workspaceFolder}/services/telegram-service",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/services/telegram-service",
+        "DATABASE_URL": "postgresql+asyncpg://notif:notif@localhost:5437/telegramdb",
+        "REDIS_URL": "redis://localhost:6379/0",
+        "SERVICE_NAME": "telegram-service",
+        "LOG_LEVEL": "DEBUG"
+      },
+      "justMyCode": false
+    },
+    {
+      "name": "gateway",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": ["app.main:create_app", "--factory", "--port", "8000", "--reload"],
+      "cwd": "${workspaceFolder}/gateway",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/gateway",
+        "NOTIFICATION_SERVICE_URL": "http://localhost:8001",
+        "CONFIGURATION_SERVICE_URL": "http://localhost:8003",
+        "SERVICE_NAME": "gateway",
+        "LOG_LEVEL": "DEBUG"
+      },
+      "justMyCode": false
+    },
+    {
       "name": "Debug Tests",
       "type": "debugpy",
       "request": "launch",

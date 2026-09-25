@@ -22,7 +22,7 @@
     {
       "label": "compose up (infra only)",
       "type": "shell",
-      "command": "docker compose up -d redis notification-db routing-db configuration-db email-db",
+      "command": "docker compose up -d redis notification-db routing-db configuration-db email-db telegram-db",
       "problemMatcher": []
     },
     {
@@ -41,7 +41,14 @@
     {
       "label": "test: integration (all services)",
       "type": "shell",
-      "command": "for s in configuration-service notification-service routing-service email-service; do PYTHONPATH=services/$s uv run pytest services/$s/tests -v || exit 1; done",
+      "command": "for s in configuration-service notification-service routing-service email-service telegram-service; do PYTHONPATH=services/$s uv run pytest services/$s/tests -v || exit 1; done && PYTHONPATH=gateway uv run pytest gateway/tests -v",
+      "options": { "shell": { "executable": "bash.exe" } },
+      "problemMatcher": []
+    },
+    {
+      "label": "test: playground",
+      "type": "shell",
+      "command": "PYTHONPATH=tools/playground uv run --group playground pytest tools/playground/tests -v",
       "options": { "shell": { "executable": "bash.exe" } },
       "problemMatcher": []
     },
