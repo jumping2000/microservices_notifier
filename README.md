@@ -319,5 +319,8 @@ New in slice 2:
   fake-server and `MockTransport` suites, and by manual use through the playground.
 - **Load test throughput is bounded by one consumer per group and the simulated delivery latency**;
   it measures the platform as configured for teaching, not its ceiling.
+- **Large load tests on the one-consumer compose stack hit the watchdog**: past roughly 450
+  notifications the delivery backlog exceeds `PROCESSING_TIMEOUT_MINUTES`, so the watchdog fails
+  queued notifications with `processing_timeout` (ADR 0028) instead of completing them.
 
 Still to come in slice 3: an API key on the Gateway, Prometheus metrics, `docs/operations.md`.

@@ -10,9 +10,28 @@ import streamlit as st
 from loadtest import MAX_CONCURRENCY, MAX_TOTAL, LoadTestConfig, LoadTestReport, run_load_test
 
 GATEWAY_URL = os.environ.get("GATEWAY_URL", "http://localhost:8000")
+# PROCESSING_TIMEOUT_MINUTES (5) x 60: past this, the watchdog (ADR 0028) fails a
+# still-queued notification with FAILED/processing_timeout.
+WATCHDOG_TIMEOUT_S = 300
+WATCHDOG_RESULT_PREFIX = "FAILED/processing_timeout"
+
+
+def estimate_backlog_s(total: int, telegram_ratio: float, fail_ratio: float) -> float:
+    """Rough per-channel backlog: (non-failing count on that channel) x the ~1s
+    average simulated delivery latency, one consumer per channel."""
+    telegram_count = round(total * telegram_ratio)
+    email_count = total - telegram_count
+    non_failing_ratio = 1.0 - fail_ratio
+    return max(telegram_count, email_count) * non_failing_ratio
 
 
 def render(report: LoadTestReport) -> None:
+    if any(key.startswith(WATCHDOG_RESULT_PREFIX) for key in report.results):
+        st.warning(
+            "Some notifications show FAILED/processing_timeout: the watchdog (ADR 0028) failed "
+            "them after they queued past PROCESSING_TIMEOUT_MINUTES (5 min) waiting for a "
+            "consumer. They are not lost or misrouted."
+        )
     if report.verdict_ok:
         st.success(f"Correct: all {report.total} notifications ended in their expected state.")
     else:
@@ -70,7 +89,9 @@ st.info(
     "In compose each consumer group has one consumer and simulated delivery sleeps up to 2 s, "
     "so throughput reflects those deliberate limits, not the code's ceiling. A large run needs "
     "a settle timeout of roughly (email share × total × 2 s), so unsettled entries at a short "
-    'timeout mean "still queued", not "lost".'
+    'timeout mean "still queued", not "lost". Above roughly 450 notifications, the resulting '
+    "backlog can exceed PROCESSING_TIMEOUT_MINUTES (5 min) and the watchdog (ADR 0028) will fail "
+    "queued notifications with processing_timeout instead of completing them."
 )
 
 with st.form("loadtest"):
@@ -82,6 +103,14 @@ with st.form("loadtest"):
     run = st.form_submit_button("Run")
 
 if run:
+    backlog_s = estimate_backlog_s(int(total), float(telegram_ratio), float(fail_ratio))
+    if backlog_s > WATCHDOG_TIMEOUT_S:
+        st.warning(
+            f"Estimated backlog on the busier channel is about {backlog_s:.0f}s of queued "
+            "delivery, past PROCESSING_TIMEOUT_MINUTES (5 min). The watchdog (ADR 0028) will fail "
+            "notifications still queued past that timeout with FAILED/processing_timeout, and the "
+            "verdict below will count them as wrong state. Consider a smaller total."
+        )
     config = LoadTestConfig(
         total=int(total),
         concurrency=int(concurrency),
