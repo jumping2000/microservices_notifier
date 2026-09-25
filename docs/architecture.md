@@ -1,9 +1,8 @@
 # Architecture
 
-Slice 1 of the Universal Notification Platform: four services, one Redis instance, and one
-Postgres database per service, wired together entirely through Redis Streams. This document
-covers what slice 1 built. Telegram Service, the API Gateway, and recovery are slice 2 — see
-"What slice 1 does not have" below.
+Slice 2 of the Universal Notification Platform: six services, one Redis instance, and one Postgres
+database per service except the Gateway, which owns none, wired together entirely through Redis
+Streams. This document covers what slice 2 built, on top of slice 1's four services.
 
 ## Services and boundaries
 
@@ -13,10 +12,14 @@ covers what slice 1 built. Telegram Service, the API Gateway, and recovery are s
 | routing-service | The routing decision per notification (`routes`) | `routingdb` | none — no domain endpoints, only `/health`, `/version`, `/docs`, `/redoc` |
 | configuration-service | Channel enable/disable state (`channels`) | `configurationdb` | `GET /channels`, `GET /channels/{name}`, `PUT /channels/{name}`, plus `/health`, `/version`, `/docs`, `/redoc` |
 | email-service | Email delivery attempts (`email_delivery`) | `emaildb` | none — no domain endpoints, only `/health`, `/version`, `/docs`, `/redoc` |
+| telegram-service | Telegram delivery attempts (`telegram_delivery`) | `telegramdb` | none — no domain endpoints, only `/health`, `/version`, `/docs`, `/redoc` |
+| gateway | Nothing — a thin reverse proxy, no domain state | none | `/api/v1/*` proxy plus `/api/v1/health` (its own status only); `/docs`, `/redoc` |
 
-Routing Service and Email Service expose **no domain REST endpoints**. Their entire job runs in
-background consumers reacting to events; a client never calls them directly, and there is no
-`POST /route` or `POST /send` anywhere in slice 1 (see ADR 0021).
+Routing Service, Email Service, and Telegram Service expose **no domain REST endpoints**. Their
+entire job runs in background consumers reacting to events; a client never calls them directly, and
+there is no `POST /route` or `POST /send` anywhere in this platform (see ADR 0021). The Gateway's
+route table (`gateway/README.md`) forwards only the endpoints notification-service and
+configuration-service already expose — it does not add one.
 
 ## Why choreography, not orchestration
 
@@ -27,9 +30,9 @@ The same is true at every step through to `DeliveryCompleted`/`DeliveryFailed`.
 
 The cost of choreography is that **the flow is not readable in one place**. There is no single
 function or file that shows "and then this happens" for the whole saga — it is assembled, in the
-reader's head, from four services' worth of independent consumer loops. This is exactly why
-`docs/event-flows.md` exists: its three sequence diagrams are the one place the whole saga
-*is* readable end to end, reconstructed from the choreography rather than expressed as code.
+reader's head, from five services' worth of independent consumer loops. This is exactly why
+`docs/event-flows.md` exists: its sequence diagrams are the one place the whole saga *is* readable
+end to end, reconstructed from the choreography rather than expressed as code.
 
 ## Database per service
 
@@ -67,16 +70,29 @@ statements rather than ORM load-mutate-save, because the transition guard
 write — a read-then-write in Python has a window in which two consumer groups could race each
 other. See **ADR 0016** and `docs/patterns.md`'s "Guarded monotonic transitions" section.
 
-## What slice 1 does not have
+## Recovery and failure handling
 
-- **No recovery worker and no watchdog.** `XPENDING`/`XCLAIM` recovery and the stale-processing
-  watchdog are slice 2. A notification whose consumer crashes mid-flight — after `XREADGROUP`
-  hands it a message but before the handler's transaction commits and `XACK`s — stays in its
-  current state indefinitely. Nothing in slice 1 will ever revisit it.
-- **No Telegram Service.** `telegram` is a valid `Channel` value and the `telegram-service`
-  consumer group is declared on `notification.routed`, but nothing consumes it yet.
-- **No API Gateway.** Clients talk to each service's own port directly (see the table in
-  `docs/local-development.md` and the root `README.md`).
+**Recovery by idle claim.** Consumer names are container hostnames and change on every restart, so
+a crashed consumer's pending stream entries cannot be found by re-reading its own name — they can
+only be found by idle time and claimed regardless of owner. One `PendingRecoverer` per service
+(`shared/notification_shared/recovery.py`) sweeps every registered `(stream, group, consumer)`,
+calling the consumer's own `handle`. See ADR 0025.
+
+**Max-retry give-up.** Only the recoverer counts failed attempts, in `processed_events.fail_count`.
+After `PENDING_MAX_RETRIES` failed recovery attempts, the consumer's `give_up` writes its own
+failure record and publishes a failure event — `RoutingFailed` from routing, `DeliveryFailed` from
+email and telegram — so the notification reaches `FAILED` with reason `max_retries_exceeded`
+instead of staying wherever the last attempt left it. See ADR 0024.
+
+**The stale-processing watchdog.** `services/notification-service/app/workers/watchdog.py` closes
+notifications stuck `PROCESSING` for longer than `PROCESSING_TIMEOUT_MINUTES`, with a guarded SQL
+update and no published event — Routing Service's own `routes` row is untouched, and a delivery
+result arriving later does not reopen the notification, because terminal states never reopen. See
+ADR 0028.
+
+## Still not built
+
+An API key on the Gateway, Prometheus metrics, and `docs/operations.md` are slice 3.
 
 ## Component diagram
 
@@ -88,10 +104,12 @@ flowchart LR
     Client(["Client"])
 
     subgraph Services
+        GW["gateway"]
         NS["notification-service"]
         RS["routing-service"]
         CS["configuration-service"]
         ES["email-service"]
+        TS["telegram-service"]
     end
 
     subgraph Redis Streams
@@ -101,8 +119,9 @@ flowchart LR
         SDF["delivery.failed"]
     end
 
-    Client -- REST --> NS
-    Client -- REST --> CS
+    Client -- REST --> GW
+    GW -- REST --> NS
+    GW -- REST --> CS
     RS -- "REST GET /channels/{name}" --> CS
 
     NS -. "XADD" .-> SNC
@@ -111,10 +130,13 @@ flowchart LR
     RS -. "XADD" .-> SNR
     RS -. "XADD" .-> SDF
     SNR -. "XREADGROUP (email-service)" .-> ES
+    SNR -. "XREADGROUP (telegram-service)" .-> TS
     SNR -. "XREADGROUP (notification-service-routed)" .-> NS
 
     ES -. "XADD" .-> SDC
     ES -. "XADD" .-> SDF
+    TS -. "XADD" .-> SDC
+    TS -. "XADD" .-> SDF
 
     SDC -. "XREADGROUP (notification-service-results)" .-> NS
     SDC -. "XREADGROUP (routing-service-results)" .-> RS

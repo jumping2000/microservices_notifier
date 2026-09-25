@@ -42,11 +42,11 @@ FastAPI `lifespan`, before any consumer task starts (ADR 0002 — offset `0`, ne
 |---|---|---|---|
 | `notification.created` | notification-service | `routing-service` | Decides where the notification is routed |
 | `notification.routed` | routing-service | `email-service` | Filters `payload.channel == "email"`, delivers |
-| | | `telegram-service` | Declared, no consumer yet (slice 2); filters `"telegram"` |
+| | | `telegram-service` | Filters `payload.channel == "telegram"`, delivers |
 | | | `notification-service-routed` | Sets `notifications.status = 'PROCESSING'` |
-| `delivery.completed` | email-service | `notification-service-results` | Sets `notifications.status = 'COMPLETED'` |
+| `delivery.completed` | email-service, telegram-service | `notification-service-results` | Sets `notifications.status = 'COMPLETED'` |
 | | | `routing-service-results` | Sets `routes.status = 'COMPLETED'` |
-| `delivery.failed` | routing-service, email-service | `notification-service-results` | Sets `notifications.status = 'FAILED'` + reason |
+| `delivery.failed` | routing-service, email-service, telegram-service | `notification-service-results` | Sets `notifications.status = 'FAILED'` + reason |
 | | | `routing-service-results` | Skips its own `RoutingFailed` (ADR 0003) |
 
 ## Event types and payloads
@@ -70,7 +70,7 @@ FastAPI `lifespan`, before any consumer task starts (ADR 0002 — offset `0`, ne
 { "channel": "email", "route_id": "uuid", "reason": "channel_disabled" }
 ```
 
-`reason` is one of `channel_disabled`, `unknown_channel`.
+`reason` is one of `channel_disabled`, `unknown_channel`, `max_retries_exceeded` (ADR 0024).
 
 `DeliveryCompleted` → `delivery.completed`
 
@@ -79,11 +79,16 @@ FastAPI `lifespan`, before any consumer task starts (ADR 0002 — offset `0`, ne
   "delivered_at": "2026-09-12T10:00:02Z" }
 ```
 
+`recipient` is the email address for `channel: "email"` and the chat id for `channel: "telegram"`
+(ADR 0026).
+
 `DeliveryFailed` → `delivery.failed`
 
 ```json
 { "channel": "email", "delivery_id": "uuid", "reason": "simulated_failure" }
 ```
+
+`reason` is one of `simulated_failure`, `smtp_rejected`, `telegram_rejected`, `max_retries_exceeded`.
 
 `subject` is nullable throughout.
 
@@ -232,6 +237,44 @@ sequenceDiagram
     C->>NS: GET /notifications/{id}
     NS-->>C: {status: FAILED, fail_reason: "simulated_failure"}
 ```
+
+## Give-up after max retries
+
+A persistent outage — here, Configuration Service unreachable — leaves the message pending after
+every ordinary attempt. `PendingRecoverer` claims it by idle time and retries it itself, counting
+each failure; at `PENDING_MAX_RETRIES` it calls the consumer's `give_up` instead of retrying again.
+
+```mermaid
+sequenceDiagram
+    participant NS as notification-service
+    participant R as Redis Streams
+    participant RS as routing-service
+    participant CS as configuration-service
+    NS->>R: XADD notification.created
+    R->>RS: XREADGROUP (routing-service)
+    RS->>CS: GET /channels/email
+    CS--xRS: connection refused (transient)
+    Note over RS: no XACK, nothing written, entry pending
+    loop every PENDING_TIMEOUT_MS, up to PENDING_MAX_RETRIES
+        RS->>R: XPENDING IDLE + XCLAIM (recoverer)
+        RS->>CS: GET /channels/email
+        CS--xRS: still down
+        Note over RS: processed_events.fail_count += 1
+    end
+    Note over RS: give_up: routes FAILED + outbox RoutingFailed(max_retries_exceeded) + FAILED_PERMANENT, one transaction
+    RS->>R: XACK
+    RS->>R: XADD delivery.failed (RoutingFailed)
+    R->>NS: XREADGROUP (notification-service-results)
+    Note over NS: CREATED -> FAILED, fail_reason = max_retries_exceeded
+```
+
+`RS` here stands for the `PendingRecoverer` running inside routing-service, driving the same
+`NotificationCreatedConsumer.handle` the normal read path calls
+(`services/routing-service/app/workers/notification_consumer.py`); the `XPENDING`/`XCLAIM` pair and
+the retry loop are `shared/notification_shared/recovery.py`'s, not routing-service's own code (ADR
+0025). Give-up (about two minutes with the defaults) and the watchdog (five minutes) are proven at
+the integration and service tiers only — exercising either end to end would make the e2e suite too
+slow.
 
 ## The ordering race, and how the SQL guard resolves it
 

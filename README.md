@@ -1,4 +1,4 @@
-# Universal Notification Platform — Slice 1
+# Universal Notification Platform — Slice 2
 
 ## What this is
 
@@ -10,26 +10,33 @@ pattern in this repository is documented in `docs/patterns.md` alongside the tes
 works, and every design correction from the original prompt is recorded as an ADR under
 `docs/adr/`.
 
-This is slice 1 of three: the saga in both its happy-path and both failure outcomes, across four
-services (Notification, Routing, Configuration, Email). Telegram Service, an API Gateway, and
-crash recovery are slice 2 — see "Known limitations" below.
+Slice 2 closes the one gap slice 1 accepted — a notification whose consumer fails mid-flight stays
+where it is forever — by adding `XPENDING`/`XCLAIM` recovery, max-retry give-up, and the
+stale-processing watchdog. It also adds Telegram Service, the API Gateway, optional real delivery
+on both channels (generic SMTP for email, the Telegram Bot API), and reworks the playground into a
+manual test console with a simulated load test page. What remains for slice 3: an operations guide,
+metrics, and an API key on the Gateway — see "Known limitations" below.
 
 ## Architecture overview
 
-Four FastAPI services, each owning its own Postgres database. No service reads another service's
-database or calls another service's REST API for a domain operation — all cross-service
-interaction flows through Redis Streams. The one exception is Routing Service's synchronous REST
-call to Configuration Service, made once per notification it routes.
+Six FastAPI services, each owning its own Postgres database except the Gateway, which owns nothing.
+No service reads another service's database or calls another service's REST API for a domain
+operation — all cross-service interaction flows through Redis Streams. The two exceptions are
+Routing Service's synchronous REST call to Configuration Service, made once per notification it
+routes, and the Gateway's synchronous REST forwarding to notification-service and
+configuration-service, made once per client request.
 
 ```mermaid
 flowchart LR
     Client(["Client"])
 
     subgraph Services
+        GW["gateway"]
         NS["notification-service"]
         RS["routing-service"]
         CS["configuration-service"]
         ES["email-service"]
+        TS["telegram-service"]
     end
 
     subgraph Redis Streams
@@ -39,8 +46,9 @@ flowchart LR
         SDF["delivery.failed"]
     end
 
-    Client -- REST --> NS
-    Client -- REST --> CS
+    Client -- REST --> GW
+    GW -- REST --> NS
+    GW -- REST --> CS
     RS -- "REST GET /channels/{name}" --> CS
 
     NS -. "XADD" .-> SNC
@@ -49,10 +57,13 @@ flowchart LR
     RS -. "XADD" .-> SNR
     RS -. "XADD" .-> SDF
     SNR -. "XREADGROUP (email-service)" .-> ES
+    SNR -. "XREADGROUP (telegram-service)" .-> TS
     SNR -. "XREADGROUP (notification-service-routed)" .-> NS
 
     ES -. "XADD" .-> SDC
     ES -. "XADD" .-> SDF
+    TS -. "XADD" .-> SDC
+    TS -. "XADD" .-> SDF
 
     SDC -. "XREADGROUP (notification-service-results)" .-> NS
     SDC -. "XREADGROUP (routing-service-results)" .-> RS
@@ -60,14 +71,15 @@ flowchart LR
     SDF -. "XREADGROUP (routing-service-results)" .-> RS
 ```
 
-A client `POST`s to Notification Service and polls it; Notification Service publishes a fact
-(`NotificationCreated`) rather than calling anyone. Routing Service reacts to that fact, checks
-Configuration Service, and publishes its own fact (`NotificationRouted` or `RoutingFailed`). Email
-Service reacts to a routed notification addressed to it and publishes a delivery outcome. Every one
-of those services also independently consumes the outcomes relevant to it, to close out its own
-record. No component tells another what to do; each reacts to what has already happened. See
-`docs/architecture.md` for the full breakdown, including the cost of this choice, and
-`docs/event-flows.md` for the sequence diagrams of all three saga outcomes.
+A client `POST`s to the Gateway and polls it; the Gateway forwards to Notification Service, which
+publishes a fact (`NotificationCreated`) rather than calling anyone. Routing Service reacts to that
+fact, checks Configuration Service, and publishes its own fact (`NotificationRouted` or
+`RoutingFailed`). Email Service and Telegram Service each react to a routed notification addressed
+to their own channel and publish a delivery outcome. Every one of those services also independently
+consumes the outcomes relevant to it, to close out its own record. No component tells another what
+to do; each reacts to what has already happened. See `docs/architecture.md` for the full breakdown,
+including the cost of this choice, and `docs/event-flows.md` for the sequence diagrams of every
+saga outcome, including give-up after max retries.
 
 ## Quick start
 
@@ -75,13 +87,13 @@ record. No component tells another what to do; each reacts to what has already h
 docker compose up --build -d --wait
 ```
 
-This builds and starts all nine containers (four services, four Postgres databases, Redis) and
+This builds and starts all twelve containers (six services, five Postgres databases, Redis) and
 waits for every healthcheck to pass.
 
-Submit a notification:
+Submit a notification, through the Gateway:
 
 ```bash
-curl -s -X POST http://localhost:8001/notifications \
+curl -s -X POST http://localhost:8000/api/v1/notifications \
   -H 'Content-Type: application/json' \
   -d '{"channel": "email", "recipient": "john@example.com", "subject": "Welcome", "body": "Hello John!"}'
 ```
@@ -93,7 +105,7 @@ curl -s -X POST http://localhost:8001/notifications \
 Poll it until it settles:
 
 ```bash
-curl -s http://localhost:8001/notifications/3f2a1e4c-...
+curl -s http://localhost:8000/api/v1/notifications/3f2a1e4c-...
 ```
 
 ```json
@@ -106,17 +118,40 @@ A moment later:
 {"notification_id": "3f2a1e4c-...", "channel": "email", "status": "COMPLETED", "fail_reason": null, "created_at": "...", "updated_at": "..."}
 ```
 
+## Real delivery
+
+Both channels are simulated by default. To send for real:
+
+```bash
+cp .env.example .env
+# fill in TELEGRAM_BOT_TOKEN and/or the SMTP_* values
+docker compose up -d
+```
+
+A Telegram notification's `recipient` **is** the chat id — there is no separate chat id variable
+(ADR 0026). Whatever you configure, two rules keep every automated path (README examples, e2e
+tests, the load test) safe and deterministic:
+
+- A recipient containing `fail` (case insensitive) always fails, deterministically, before any
+  network call.
+- A **reserved** recipient — email at `example.com`/`example.org`/`example.net` or any domain under
+  the top-level domains `.example`/`.invalid`/`.test` (RFC 2606), or a Telegram chat id starting
+  with `sim-` — is always delivered by the simulated sender, whatever is configured (ADR 0030).
+
+The playground shows each channel's configured mode (`GET /version`'s `delivery_mode`) and asks for
+an explicit confirmation before submitting a real send to a non-reserved recipient.
+
 ## Stream topology
 
 | Stream | Publishers | Consumer group | Behaviour |
 |---|---|---|---|
 | `notification.created` | notification-service | `routing-service` | Decides where the notification is routed |
 | `notification.routed` | routing-service | `email-service` | Filters `payload.channel == "email"`, delivers |
-| | | `telegram-service` | Declared, no consumer yet (slice 2); filters `"telegram"` |
+| | | `telegram-service` | Filters `payload.channel == "telegram"`, delivers |
 | | | `notification-service-routed` | Sets `notifications.status = 'PROCESSING'` |
-| `delivery.completed` | email-service | `notification-service-results` | Sets `notifications.status = 'COMPLETED'` |
+| `delivery.completed` | email-service, telegram-service | `notification-service-results` | Sets `notifications.status = 'COMPLETED'` |
 | | | `routing-service-results` | Sets `routes.status = 'COMPLETED'` |
-| `delivery.failed` | routing-service, email-service | `notification-service-results` | Sets `notifications.status = 'FAILED'` + reason |
+| `delivery.failed` | routing-service, email-service, telegram-service | `notification-service-results` | Sets `notifications.status = 'FAILED'` + reason |
 | | | `routing-service-results` | Skips its own `RoutingFailed` |
 
 Full payload schemas and sequence diagrams: `docs/event-flows.md`.
@@ -126,12 +161,12 @@ Full payload schemas and sequence diagrams: `docs/event-flows.md`.
 The happy path: `CREATED → PROCESSING → COMPLETED`.
 
 ```bash
-curl -s -X POST http://localhost:8001/notifications \
+curl -s -X POST http://localhost:8000/api/v1/notifications \
   -H 'Content-Type: application/json' \
   -d '{"channel": "email", "recipient": "john@example.com", "body": "Hello"}'
 # -> {"notification_id": "<id>", "status": "CREATED"}
 
-curl -s http://localhost:8001/notifications/<id>
+curl -s http://localhost:8000/api/v1/notifications/<id>
 # -> status: CREATED, then PROCESSING, then COMPLETED as you poll again
 ```
 
@@ -139,69 +174,107 @@ curl -s http://localhost:8001/notifications/<id>
 `CREATED → FAILED` directly (no `PROCESSING` in between):
 
 ```bash
-curl -s -X PUT http://localhost:8003/channels/email -H 'Content-Type: application/json' -d '{"enabled": false}'
+curl -s -X PUT http://localhost:8000/api/v1/channels/email -H 'Content-Type: application/json' -d '{"enabled": false}'
 
-curl -s -X POST http://localhost:8001/notifications \
+curl -s -X POST http://localhost:8000/api/v1/notifications \
   -H 'Content-Type: application/json' \
   -d '{"channel": "email", "recipient": "john@example.com", "body": "Hello"}'
 
-curl -s http://localhost:8001/notifications/<id>
+curl -s http://localhost:8000/api/v1/notifications/<id>
 # -> {"status": "FAILED", "fail_reason": "channel_disabled", ...}
 ```
 
-Re-enable it afterward: `curl -s -X PUT http://localhost:8003/channels/email -H 'Content-Type: application/json' -d '{"enabled": true}'`
+Re-enable it afterward: `curl -s -X PUT http://localhost:8000/api/v1/channels/email -H 'Content-Type: application/json' -d '{"enabled": true}'`
 
 **Failure path 2 — a `fail` recipient**, so routing succeeds and delivery itself fails, going
 `CREATED → PROCESSING → FAILED`:
 
 ```bash
-curl -s -X POST http://localhost:8001/notifications \
+curl -s -X POST http://localhost:8000/api/v1/notifications \
   -H 'Content-Type: application/json' \
   -d '{"channel": "email", "recipient": "fail@example.com", "body": "Hello"}'
 
-curl -s http://localhost:8001/notifications/<id>
+curl -s http://localhost:8000/api/v1/notifications/<id>
 # -> {"status": "FAILED", "fail_reason": "simulated_failure", ...}
+```
+
+**Telegram happy path**, a reserved chat id so it stays simulated:
+
+```bash
+curl -s -X POST http://localhost:8000/api/v1/notifications \
+  -H 'Content-Type: application/json' \
+  -d '{"channel": "telegram", "recipient": "sim-demo", "body": "Hello"}'
+
+curl -s http://localhost:8000/api/v1/notifications/<id>
+# -> status: CREATED, then PROCESSING, then COMPLETED as you poll again
+```
+
+**Recovery**, stopping and restarting a dependency mid-flight:
+
+```bash
+docker compose stop configuration-service
+
+curl -s -X POST http://localhost:8000/api/v1/notifications \
+  -H 'Content-Type: application/json' \
+  -d '{"channel": "email", "recipient": "john@example.com", "body": "Hello"}'
+# -> {"notification_id": "<id>", "status": "CREATED"}
+# stays CREATED: routing-service cannot reach configuration-service
+
+docker compose start configuration-service
+
+curl -s http://localhost:8000/api/v1/notifications/<id>
+# -> watch it reach COMPLETED within about 40s, once recovery claims and retries the entry
 ```
 
 ## Configuration
 
-Every variable below is set in `docker-compose.yml` and overridable there. "Reads in slice 1"
-marks whether the variable is actually consumed by slice-1 code today, independent of what the
-full platform's design eventually needs.
+Every variable below is set in `docker-compose.yml` and overridable there (or, for the secrets, in
+a local `.env` — see "Real delivery" above).
 
-| Variable | Default | Applies to | Reads in slice 1 |
+| Variable | Default | Applies to | Reads in slice 2 |
 |---|---|---|---|
-| `DATABASE_URL` | — | all except gateway | Yes (notification, routing, configuration, email) |
-| `REDIS_URL` | `redis://redis:6379/0` | all event-driven services | Yes (notification, routing, email) |
+| `DATABASE_URL` | — | all except gateway | Yes |
+| `REDIS_URL` | `redis://redis:6379/0` | all event-driven services | Yes |
 | `SERVICE_NAME` | per service | all | Yes |
 | `SERVICE_VERSION` | `1.0.0` | all | Yes |
 | `LOG_LEVEL` | `INFO` | all | Yes |
-| `CONSUMER_POLL_INTERVAL_MS` | `500` | event-driven services | Yes (notification, routing, email) |
-| `OUTBOX_POLL_INTERVAL_MS` | `500` | services with an outbox | Yes (notification, routing, email) |
-| `OUTBOX_BATCH_SIZE` | `100` | services with an outbox | Yes (notification, routing, email) |
-| `PENDING_TIMEOUT_MS` | `30000` | slice 2 | No |
-| `PENDING_MAX_RETRIES` | `3` | slice 2 | No |
-| `PROCESSING_TIMEOUT_MINUTES` | `5` | notification-service, slice 2 | No |
-| `CONFIGURATION_SERVICE_URL` | — | routing-service | Yes |
-| `HTTP_TIMEOUT_SECONDS` | `5.0` | routing-service, gateway | Yes (routing-service only; no gateway in slice 1) |
-| `GATEWAY_TIMEOUT_SECONDS` | `10.0` | gateway, slice 2 | No |
-| `TELEGRAM_BOT_TOKEN` | unset | telegram-service, slice 2 | No |
-| `TELEGRAM_CHAT_ID` | unset | telegram-service, slice 2 | No |
+| `CONSUMER_POLL_INTERVAL_MS` | `500` | event-driven services | Yes |
+| `OUTBOX_POLL_INTERVAL_MS` | `500` | services with an outbox | Yes |
+| `OUTBOX_BATCH_SIZE` | `100` | services with an outbox | Yes |
+| `PENDING_TIMEOUT_MS` | `30000` | routing, email, telegram, notification | Yes |
+| `PENDING_MAX_RETRIES` | `3` | routing, email, telegram, notification | Yes |
+| `RECOVERY_POLL_INTERVAL_MS` | `5000` | routing, email, telegram, notification | Yes |
+| `PROCESSING_TIMEOUT_MINUTES` | `5` | notification-service | Yes |
+| `WATCHDOG_INTERVAL_SECONDS` | `60` | notification-service | Yes |
+| `CONFIGURATION_SERVICE_URL` | `http://configuration-service:8000` | routing-service, gateway | Yes |
+| `HTTP_TIMEOUT_SECONDS` | `5.0` | routing, telegram, email (SMTP connect timeout) | Yes |
+| `GATEWAY_TIMEOUT_SECONDS` | `10.0` | gateway | Yes |
+| `NOTIFICATION_SERVICE_URL` | `http://notification-service:8000` | gateway | Yes |
+| `DELIVERY_LATENCY_MS_MAX` | `500` | email, telegram (simulated sender) | Yes |
+| `TELEGRAM_BOT_TOKEN` | unset | telegram-service | Yes |
+| `SMTP_HOST` | unset | email-service | Yes |
+| `SMTP_PORT` | `587` | email-service | Yes |
+| `SMTP_USERNAME` | unset | email-service | Yes |
+| `SMTP_PASSWORD` | unset | email-service | Yes |
+| `SMTP_FROM` | unset | email-service; required when `SMTP_HOST` is set | Yes |
+| `SMTP_SECURITY` | `starttls` | email-service; `starttls`, `ssl`, or `none` | Yes |
+| `GATEWAY_URL` | `http://localhost:8000` | playground, e2e tests | Yes |
+| `TELEGRAM_URL` | `http://localhost:8005` | playground, e2e tests | Yes |
 
-Email Service also reads `DELIVERY_LATENCY_MS_MAX` (default `500`), the upper bound in
-milliseconds of its simulated random delivery delay — not part of the platform-wide table above
-because it applies only to Email Service.
+`TELEGRAM_CHAT_ID` from the slice 1 design is **removed**: the notification's `recipient` is the
+chat id (ADR 0026).
 
 ## Local setup with uv
 
 ```bash
 uv venv
-uv sync --all-packages
+uv sync --all-packages --group playground
 ```
 
-produces one root `.venv` for the whole workspace. `uv pip install` does **not** work with the
-installed `uv` (0.11.7 rejects it) — use `uv add`, `uv sync`, and `uv run` only. See
-`docs/local-development.md` for VS Code debugging, migrations, and resetting.
+produces one root `.venv` for the whole workspace, including the Gateway and the playground's own
+dependency group. `uv pip install` does **not** work with the installed `uv` (0.11.7 rejects it) —
+use `uv add`, `uv sync`, and `uv run` only. See `docs/local-development.md` for VS Code debugging,
+migrations, and resetting.
 
 ## Running the tests
 
@@ -212,32 +285,39 @@ PYTHONPATH=services/configuration-service uv run pytest services/configuration-s
 PYTHONPATH=services/notification-service  uv run pytest services/notification-service/tests
 PYTHONPATH=services/routing-service       uv run pytest services/routing-service/tests
 PYTHONPATH=services/email-service         uv run pytest services/email-service/tests
+PYTHONPATH=services/telegram-service      uv run pytest services/telegram-service/tests
+PYTHONPATH=gateway                        uv run pytest gateway/tests
+PYTHONPATH=tools/playground uv run --group playground pytest tools/playground/tests
 ```
 
-The first two need Docker running (real Postgres and Redis via testcontainers); the four service
-suites too. End-to-end tests (`uv run pytest tests/e2e`) need the full stack already up via
-`docker compose up --build -d --wait`.
+The first two, and every service suite, need Docker running (real Postgres and Redis via
+testcontainers); the gateway suite does not need Docker. End-to-end tests (`uv run pytest
+tests/e2e`) need the full stack already up via `docker compose up --build -d --wait`.
 
 ## Known limitations
 
-Carried over from the original design, unchanged:
+Carried from slice 1 and still true: no schema registry, no dead-letter queue (a given-up event is
+recorded in `processed_events` and discarded from the stream), no distributed tracing backend, no
+circuit breaker on the Routing → Configuration REST call, no horizontal scaling of consumers — one
+instance per service, one consumer per group — and at-least-once delivery, not exactly-once.
 
-- No schema registry — events are versioned by convention, not enforced
-- No dead-letter queue — max-retry via `processed_events`, then discard (slice 2)
-- No distributed tracing backend — correlation ID in logs only, no OpenTelemetry spans
-- No circuit breaker on the Routing → Configuration REST call
-- No horizontal scaling of consumers — one instance per service, one consumer per group
-- At-least-once delivery, not exactly-once; idempotency mitigates duplicate effects
-- Simulated delivery for Email; Telegram is real only when its environment variables are set (slice 2)
-- No real SMTP
+No longer true: "No real SMTP."
 
-Added for slice 1:
+New in slice 2:
 
-- **Slice 1 has no recovery worker and no watchdog.** `XPENDING`/`XCLAIM` recovery, max-retry
-  handling, and the stale-processing watchdog are all slice 2. A notification whose consumer
-  crashes mid-flight — after reading a message but before its handling transaction commits and
-  acks — stays in its current state indefinitely. Nothing in slice 1 will ever revisit it.
-- **Postgres and Redis state are coupled.** Consumer groups start at offset `0`, so a group
-  re-created against a database that was reset without also resetting Redis replays that stream's
-  entire history against empty tables. Volumes must be reset together: `docker compose down -v`,
-  never one store alone.
+- **Recovery latency.** A transient failure is retried only after `PENDING_TIMEOUT_MS` of idleness;
+  give-up takes about two minutes with the defaults.
+- **The watchdog leaves Routing Service's `routes` row at `PROCESSING`**, and can mark a
+  notification `FAILED` whose delivery later succeeds, because terminal states never reopen (ADR
+  0028).
+- **Dead consumer names accumulate** in each group's `XINFO CONSUMERS` listing. Harmless; not
+  cleaned up.
+- **At-least-once delivery now has a visible cost.** A crash after a real send but before the commit
+  sends the email or Telegram message twice. Idempotency protects the database, not the recipient's
+  inbox.
+- **Real SMTP and Bot API delivery are not exercised by any automated test** — they are covered by
+  fake-server and `MockTransport` suites, and by manual use through the playground.
+- **Load test throughput is bounded by one consumer per group and the simulated delivery latency**;
+  it measures the platform as configured for teaching, not its ceiling.
+
+Still to come in slice 3: an API key on the Gateway, Prometheus metrics, `docs/operations.md`.

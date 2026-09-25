@@ -37,6 +37,11 @@ client-facing entry point in slice 1 and the only service whose read model the c
 | `OUTBOX_POLL_INTERVAL_MS` | `500` | Outbox publisher poll interval |
 | `OUTBOX_BATCH_SIZE` | `100` | Outbox publisher batch size |
 | `CONSUMER_POLL_INTERVAL_MS` | `500` | Poll interval for both consumers (`routed`, `results`) |
+| `PENDING_TIMEOUT_MS` | `30000` | How long an entry must be idle before recovery claims it |
+| `PENDING_MAX_RETRIES` | `3` | Recovery attempts before `give_up` |
+| `RECOVERY_POLL_INTERVAL_MS` | `5000` | Recovery sweep interval |
+| `PROCESSING_TIMEOUT_MINUTES` | `5` | Watchdog: how long a notification may stay `PROCESSING` |
+| `WATCHDOG_INTERVAL_SECONDS` | `60` | Watchdog sweep interval |
 
 ## HTTP endpoints
 
@@ -50,6 +55,9 @@ client-facing entry point in slice 1 and the only service whose read model the c
 
 ## Workers
 
-Three background tasks started in the FastAPI `lifespan`: the outbox publisher, the routed
-consumer (`notification-service-routed`), and the results consumer
-(`notification-service-results`).
+Five background tasks started in the FastAPI `lifespan`: the outbox publisher, the routed consumer
+(`notification-service-routed`), the results consumer (`notification-service-results`), the pending
+recoverer, and the stale-processing watchdog (`app/workers/watchdog.py`). The watchdog closes
+notifications stuck `PROCESSING` for longer than `PROCESSING_TIMEOUT_MINUTES`; it publishes no
+event, and a delivery result arriving after it has already failed a notification does not reopen it
+(ADR 0028).

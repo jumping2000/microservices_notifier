@@ -41,6 +41,9 @@ synchronous REST call outward, to Configuration Service, per notification it rou
 | `OUTBOX_POLL_INTERVAL_MS` | `500` | |
 | `OUTBOX_BATCH_SIZE` | `100` | |
 | `CONSUMER_POLL_INTERVAL_MS` | `500` | |
+| `PENDING_TIMEOUT_MS` | `30000` | How long an entry must be idle before recovery claims it |
+| `PENDING_MAX_RETRIES` | `3` | Recovery attempts before `give_up` |
+| `RECOVERY_POLL_INTERVAL_MS` | `5000` | Recovery sweep interval |
 
 ## HTTP endpoints
 
@@ -53,9 +56,12 @@ synchronous REST call outward, to Configuration Service, per notification it rou
 
 ## Workers
 
-Three background tasks started in the FastAPI `lifespan`: the `notification.created` consumer
-(`routing-service`), the results consumer (`routing-service-results`), and the outbox publisher.
+Four background tasks started in the FastAPI `lifespan`: the `notification.created` consumer
+(`routing-service`), the results consumer (`routing-service-results`), the outbox publisher, and the
+pending recoverer.
 
 A Configuration Service timeout or `5xx` is treated as **transient**: the message is left pending
-(no `XACK`, no outbox row) for slice 2's `XCLAIM` recovery rather than being recorded as a routing
-failure. See ADR 0018.
+(no `XACK`, no outbox row) for `PendingRecoverer`'s `XCLAIM` recovery rather than being recorded as
+a routing failure (ADR 0018). After `PENDING_MAX_RETRIES` failed recovery attempts, `give_up` writes
+the route `FAILED` and publishes `RoutingFailed` with reason `max_retries_exceeded`, in one
+transaction with `mark_failed_permanent` (ADR 0024).

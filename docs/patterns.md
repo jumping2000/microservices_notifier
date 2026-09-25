@@ -124,10 +124,15 @@ COMPLETED/FAILED`, never backward, never reopened once terminal — and that rul
 `WHERE` clause of the `UPDATE` statement itself, not by reading the current status in Python and
 deciding whether to write.
 
-**Where it lives.** `NotificationRepository.advance_status` in
+**Where it lives.** Two implementations of the same shape, one per service that owns a status
+column: `NotificationRepository.advance_status` in
 `services/notification-service/app/repositories/notification.py`, called from both
 `RoutedConsumer` (guard: `status = 'CREATED'`) and `ResultsConsumer` (guard: `status IN
-('CREATED', 'PROCESSING')`).
+('CREATED', 'PROCESSING')`); and `RouteRepository.set_status` in
+`services/routing-service/app/repositories/route.py`, called from the results consumer with guard
+`status = 'PROCESSING'` (only a route already in flight can be closed). This closes a slice 1
+parked item: `docs/patterns.md` used to name only the notification-service implementation, as if
+`routes` had no equivalent guard, when it always did.
 
 **The race.** `notification-service-routed` (reads `notification.routed`) and
 `notification-service-results` (reads `delivery.completed`/`delivery.failed`) are independent
@@ -173,3 +178,85 @@ actually acted on. The notification or the route would silently never reach its 
 one event processed for `ConsumerGroup.ROUTING` and then asserts it is `True` for that group but
 still `False` for `ConsumerGroup.EMAIL` — proving the same `event_id` is tracked independently per
 group rather than globally.
+
+## Recovery by idle claim
+
+**What it does.** Finds a crashed consumer's pending stream entries by idle time rather than by
+consumer name, and claims them onto a live consumer so they can be handled the normal way.
+
+**Where it lives.** `shared/notification_shared/recovery.py` (`PendingRecoverer`), built on
+`RedisStreamConsumer.get_pending` / `.claim` in `shared/notification_shared/streams.py`. One
+instance per service, wired in `lifespan` next to `OutboxPublisher`; the per-service consumers stay
+explicit and expose only `handle` and `give_up` for the recoverer to call.
+
+**What breaks without it.** Consumer names are container hostnames, which change on every restart.
+A consumer that crashes mid-handle leaves its entry pending under a name that no longer exists;
+without idle-time claiming, nothing would ever find that entry again, and the notification behind it
+would stay wherever the crash left it forever.
+
+**The test.** `tests/integration/test_recovery.py::test_a_stranded_message_is_claimed_and_completed`
+and the e2e
+`tests/e2e/test_slice2.py::test_recovery_routes_a_notification_stranded_by_a_configuration_outage`.
+
+## Max-retry and give-up
+
+**What it does.** Caps how many times recovery retries a failing entry. Past `PENDING_MAX_RETRIES`,
+the consumer gives up instead of retrying forever — it writes its own failure record and, where
+there is someone to tell, a failure event, then the entry is acked and dropped.
+
+**Where it lives.** `PendingRecoverer._recover` in `shared/notification_shared/recovery.py` decides
+when to give up (`should_give_up`, comparing `processed_events.fail_count` to `max_retries`); each
+consumer's own `give_up(session, envelope)` — `services/routing-service/app/workers/
+notification_consumer.py`, `services/email-service/app/workers/routed_consumer.py`,
+`services/telegram-service/app/workers/routed_consumer.py` — decides what to write.
+
+**What breaks without it.** Without a cap, a poison message — one that can never succeed, such as a
+malformed payload a consumer cannot act on — would be retried forever, forever occupying a slot in
+the pending list. Without `give_up` writing something, an uncapped retry's alternative (silent
+discard) would leave the notification stuck in whatever state the last attempt left it, with no
+error anywhere a client or operator could see.
+
+**The test.** `tests/integration/test_recovery.py::test_the_last_failed_attempt_gives_up_and_acks`
+and
+`services/routing-service/tests/test_notification_consumer.py::test_a_persistent_outage_ends_in_routing_failed_after_max_retries`.
+
+## Stale-processing watchdog
+
+**What it does.** A safety net independent of recovery: closes any notification that has sat
+`PROCESSING` for longer than `PROCESSING_TIMEOUT_MINUTES`, whatever the reason it never received a
+delivery result.
+
+**Where it lives.** `services/notification-service/app/workers/watchdog.py` (`Watchdog`), calling
+`NotificationRepository.fail_stale_processing` — a guarded `UPDATE` using the database's own clock,
+publishing no event (ADR 0028).
+
+**What breaks without it.** Recovery only ever revisits entries still pending in a consumer group.
+A notification can end up `PROCESSING` with nothing pending anywhere — for example, Routing
+Service's or Notification Service's own results consumer already gave up silently on the event that
+would have closed it (spec 2.6). Without the watchdog, that notification is stuck `PROCESSING`
+forever with no mechanism left that will ever look at it again.
+
+**The test.**
+`services/notification-service/tests/test_watchdog.py::test_a_stale_processing_notification_is_failed`,
+`::test_a_recent_processing_notification_is_left_alone`, and
+`::test_a_late_delivery_result_does_not_reopen_it`.
+
+## Reserved recipients
+
+**What it does.** Recognizes recipients reserved by convention for documentation and testing — RFC
+2606 email domains and TLDs, and Telegram chat ids starting with `sim-` — and always delivers them
+through the simulated sender, whatever the platform is configured to use for real delivery.
+
+**Where it lives.** `shared/notification_shared/delivery.py`
+(`is_failure_recipient`, `is_reserved_recipient`), checked in that order by both delivery
+consumers before any network call, and by `tools/playground/loadtest.py::plan_notifications`, which
+generates only reserved recipients.
+
+**What breaks without it.** Real credentials in a developer's `.env` for manual playground testing
+would leak into every other path that submits a notification — the e2e suite, the README's own
+`curl` examples, the load test — turning an automated test run into a batch of real emails or
+Telegram messages to whatever addresses those paths happen to use.
+
+**The test.** `tests/unit/test_delivery.py`;
+`services/email-service/tests/test_routed_consumer.py::test_a_reserved_recipient_never_reaches_the_configured_sender`;
+`services/telegram-service/tests/test_bot_api.py::test_a_sim_chat_id_never_reaches_the_bot_api`.
