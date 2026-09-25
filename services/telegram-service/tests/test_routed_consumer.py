@@ -160,6 +160,42 @@ async def test_give_up_records_a_failed_delivery_and_publishes_delivery_failed(c
         assert published.payload["reason"] == "max_retries_exceeded"
 
 
+async def test_give_up_on_a_payload_missing_the_recipient_still_records_a_failed_delivery(
+    consumer, sessions
+):
+    """spec 2.6: give_up cannot fail for the reason handle did. A malformed
+    payload — missing recipient (chat id) — is the poison message the retry
+    cap protects against (docs/patterns.md)."""
+    event = EventEnvelope.new(
+        event_type=EventType.NOTIFICATION_ROUTED,
+        aggregate_id=uuid4(),
+        payload={
+            "channel": "telegram",
+            "subject": "Hi",
+            "body": "Hello there",
+            "route_id": str(uuid4()),
+        },
+        correlation_id="corr-telegram",
+    )
+
+    async with sessions() as session:
+        await consumer.give_up(session, event)
+        await session.commit()
+
+    async with sessions() as session:
+        delivery = (await session.scalars(select(TelegramDelivery))).one()
+        assert delivery.notification_id == event.aggregate_id
+        assert delivery.chat_id == ""
+        assert (delivery.status, delivery.fail_reason) == (
+            DeliveryStatus.FAILED,
+            "max_retries_exceeded",
+        )
+        published = EventEnvelope.model_validate(
+            (await session.scalars(select(Outbox))).one().payload
+        )
+        assert published.payload["reason"] == "max_retries_exceeded"
+
+
 async def test_consume_once_on_an_empty_stream_returns_zero(consumer):
     await consumer.ensure_groups()
     assert await consumer.consume_once() == 0

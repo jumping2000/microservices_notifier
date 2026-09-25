@@ -156,7 +156,10 @@ class RoutedConsumer:
     ) -> None:
         """The delivery row, inserted already terminal, and its outbox event.
         The caller owns the transaction."""
-        chat_id = envelope.payload["recipient"]
+        # give_up must not fail for the reason handle did (spec 2.6): a
+        # malformed payload missing its recipient is the poison message the
+        # retry cap protects against (docs/patterns.md).
+        chat_id = envelope.payload.get("recipient", "")
         delivery = TelegramDelivery(
             id=uuid4(),
             notification_id=envelope.aggregate_id,

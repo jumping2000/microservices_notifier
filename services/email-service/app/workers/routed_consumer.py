@@ -143,7 +143,10 @@ class RoutedConsumer:
     ) -> None:
         """The delivery row, inserted already terminal (ADR 0022), and its
         outbox event. The caller owns the transaction."""
-        recipient = envelope.payload["recipient"]
+        # give_up must not fail for the reason handle did (spec 2.6): a
+        # malformed payload missing its recipient is the poison message the
+        # retry cap protects against (docs/patterns.md).
+        recipient = envelope.payload.get("recipient", "")
         delivery = EmailDelivery(
             id=uuid4(),
             notification_id=envelope.aggregate_id,

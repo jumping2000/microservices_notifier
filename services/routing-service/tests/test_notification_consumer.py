@@ -382,6 +382,42 @@ async def test_give_up_writes_a_failed_route_and_routing_failed(make_consumer, s
         assert published.event_type is EventType.ROUTING_FAILED
         assert published.payload["reason"] == "max_retries_exceeded"
         assert published.payload["route_id"] == str(route.id)
+
+
+async def test_give_up_on_a_payload_missing_the_channel_still_writes_a_failed_route(
+    make_consumer, sessions
+):
+    """spec 2.6: give_up cannot fail for the reason handle did. A malformed
+    payload — missing channel — is the poison message the retry cap protects
+    against (docs/patterns.md)."""
+    consumer = make_consumer(_unavailable)
+    event = EventEnvelope.new(
+        event_type=EventType.NOTIFICATION_CREATED,
+        aggregate_id=uuid4(),
+        payload={
+            "recipient": "john@example.com",
+            "subject": "Welcome",
+            "body": "Hello John!",
+        },
+        correlation_id="corr-route",
+    )
+
+    async with sessions() as session:
+        await consumer.give_up(session, event)
+        await session.commit()
+
+    async with sessions() as session:
+        route = (await session.scalars(select(Route))).one()
+        assert route.notification_id == event.aggregate_id
+        assert route.channel == "unknown"
+        assert route.status == RouteStatus.FAILED
+        assert route.fail_reason == "max_retries_exceeded"
+
+        outbox_row = (await session.scalars(select(Outbox))).one()
+        assert outbox_row.stream == "delivery.failed"
+        published = EventEnvelope.model_validate(outbox_row.payload)
+        assert published.event_type is EventType.ROUTING_FAILED
+        assert published.payload["reason"] == "max_retries_exceeded"
         assert published.correlation_id == "corr-route"
 
 

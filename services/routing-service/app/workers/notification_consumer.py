@@ -133,7 +133,12 @@ class NotificationCreatedConsumer:
         self, session: AsyncSession, envelope: EventEnvelope, fail_reason: str | None
     ) -> None:
         """The route row and its outbox event. The caller owns the transaction."""
-        channel = envelope.payload["channel"]
+        # give_up must not fail for the reason handle did (spec 2.6): a
+        # malformed payload missing its channel is the poison message the
+        # retry cap protects against (docs/patterns.md). The success branch
+        # below is unreachable with a missing channel, because handle's
+        # _decide already required it.
+        channel = envelope.payload.get("channel", "unknown")
         route = Route(
             id=uuid4(),
             notification_id=envelope.aggregate_id,

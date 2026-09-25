@@ -223,6 +223,41 @@ async def test_give_up_records_a_failed_delivery_and_publishes_delivery_failed(c
         assert await session.scalar(select(func.count()).select_from(ProcessedEvent)) == 0
 
 
+async def test_give_up_on_a_payload_missing_the_recipient_still_records_a_failed_delivery(
+    consumer, sessions
+):
+    """spec 2.6: give_up cannot fail for the reason handle did. A malformed
+    payload — missing recipient — is the poison message the retry cap
+    protects against (docs/patterns.md)."""
+    event = EventEnvelope.new(
+        event_type=EventType.NOTIFICATION_ROUTED,
+        aggregate_id=uuid4(),
+        payload={
+            "channel": "email",
+            "subject": "Welcome",
+            "body": "Hello John!",
+            "route_id": str(uuid4()),
+        },
+        correlation_id="corr-email",
+    )
+
+    async with sessions() as session:
+        await consumer.give_up(session, event)
+        await session.commit()
+
+    async with sessions() as session:
+        delivery = (await session.scalars(select(EmailDelivery))).one()
+        assert delivery.notification_id == event.aggregate_id
+        assert delivery.recipient == ""
+        assert delivery.status == DeliveryStatus.FAILED
+        assert delivery.fail_reason == "max_retries_exceeded"
+
+        outbox_row = (await session.scalars(select(Outbox))).one()
+        published = EventEnvelope.model_validate(outbox_row.payload)
+        assert published.event_type is EventType.DELIVERY_FAILED
+        assert published.payload["reason"] == "max_retries_exceeded"
+
+
 class RecordingSender:
     """Stands in for a real sender; records who it was asked to reach."""
 
