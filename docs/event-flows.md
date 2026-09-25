@@ -1,6 +1,8 @@
+**English** | [Italiano](event-flows.it.md)
+
 # Event Flows
 
-Everything that crosses a service boundary in slice 1 crosses it as an event on a Redis Stream.
+Every domain interaction that crosses a service boundary crosses it as an event on a Redis Stream.
 This document is the one place the whole saga is readable end to end — the cost of choreography
 (see `docs/architecture.md`) is that no single file in the running system shows this; the diagrams
 below reconstruct it.
@@ -24,7 +26,7 @@ class EventEnvelope(BaseModel):
 |---|---|
 | `event_id` | Unique per publication. The idempotency key, paired with a consumer group. |
 | `event_type` | One of the five event types below. |
-| `event_version` | Always `1` in slice 1; reserved for future payload changes. |
+| `event_version` | Always `1` so far; reserved for future payload changes. |
 | `occurred_at` | When the fact became true, not when it was published. |
 | `correlation_id` | Carried from the originating HTTP request through every downstream event, so every log line across every service for one saga shares one value. |
 | `aggregate_id` | **Always the notification_id** — never a route id, a delivery id, or anything else — so the whole saga, across every stream and every service, correlates on one identifier regardless of which service or event type is involved. |
@@ -280,7 +282,7 @@ slow.
 
 `notification-service-routed` and `notification-service-results` are independent consumer groups
 reading different streams (`notification.routed` and `delivery.completed`/`delivery.failed`
-respectively) with no ordering guarantee between them. Email delivery is fast enough in slice 1
+respectively) with no ordering guarantee between them. Simulated email delivery is fast enough
 that `delivery.completed` can genuinely be consumed **before** `notification.routed` — the
 notification is still `CREATED` when the completion event arrives.
 

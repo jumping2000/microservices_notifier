@@ -1,3 +1,5 @@
+**English** | [Italiano](README.it.md)
+
 # configuration-service
 
 Holds runtime channel enable/disable state, read by Routing Service once per notification. It

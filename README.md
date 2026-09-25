@@ -1,3 +1,5 @@
+**English** | [Italiano](README.it.md)
+
 # Universal Notification Platform — Slice 2
 
 ## What this is
@@ -14,8 +16,11 @@ Slice 2 closes the one gap slice 1 accepted — a notification whose consumer fa
 where it is forever — by adding `XPENDING`/`XCLAIM` recovery, max-retry give-up, and the
 stale-processing watchdog. It also adds Telegram Service, the API Gateway, optional real delivery
 on both channels (generic SMTP for email, the Telegram Bot API), and reworks the playground into a
-manual test console with a simulated load test page. What remains for slice 3: an operations guide,
-metrics, and an API key on the Gateway — see "Known limitations" below.
+manual test console with a simulated load test page. What remains for slice 3: metrics and an API
+key on the Gateway — see "Known limitations" below.
+
+**Documentation:** start from the [documentation index](docs/README.md) — getting started, the
+playground guide, configuration, API reference and operations, in English and Italian.
 
 ## Architecture overview
 
@@ -259,6 +264,10 @@ a local `.env` — see "Real delivery" above).
 | `SMTP_FROM` | unset | email-service; required when `SMTP_HOST` is set | Yes |
 | `SMTP_SECURITY` | `starttls` | email-service; `starttls`, `ssl`, or `none` | Yes |
 | `GATEWAY_URL` | `http://localhost:8000` | playground, e2e tests | Yes |
+| `NOTIFICATION_URL` | `http://localhost:8001` | playground, e2e tests | Yes |
+| `ROUTING_URL` | `http://localhost:8002` | playground, e2e tests | Yes |
+| `CONFIGURATION_URL` | `http://localhost:8003` | playground, e2e tests | Yes |
+| `EMAIL_URL` | `http://localhost:8004` | playground, e2e tests | Yes |
 | `TELEGRAM_URL` | `http://localhost:8005` | playground, e2e tests | Yes |
 
 `TELEGRAM_CHAT_ID` from the slice 1 design is **removed**: the notification's `recipient` is the
@@ -324,4 +333,4 @@ New in slice 2:
   notifications the delivery backlog exceeds `PROCESSING_TIMEOUT_MINUTES`, so the watchdog fails
   queued notifications with `processing_timeout` (ADR 0028) instead of completing them.
 
-Still to come in slice 3: an API key on the Gateway, Prometheus metrics, `docs/operations.md`.
+Still to come in slice 3: an API key on the Gateway, Prometheus metrics.

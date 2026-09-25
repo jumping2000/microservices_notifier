@@ -1,3 +1,5 @@
+**English** | [Italiano](README.it.md)
+
 # routing-service
 
 Decides which channel a notification is routed to. It exposes **no domain REST endpoints**: its

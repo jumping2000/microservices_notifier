@@ -1,3 +1,5 @@
+**English** | [Italiano](architecture.it.md)
+
 # Architecture
 
 Slice 2 of the Universal Notification Platform: six services, one Redis instance, and one Postgres
@@ -92,7 +94,7 @@ ADR 0028.
 
 ## Still not built
 
-An API key on the Gateway, Prometheus metrics, and `docs/operations.md` are slice 3.
+An API key on the Gateway and Prometheus metrics are slice 3.
 
 ## Component diagram
 

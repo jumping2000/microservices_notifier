@@ -1,3 +1,5 @@
+**English** | [Italiano](patterns.it.md)
+
 # Patterns
 
 Every pattern below answers three questions: what it does, which file it lives in, and what breaks
@@ -14,7 +16,7 @@ outside that transaction.
 **Where it lives.** `shared/notification_shared/outbox.py` (`OutboxRepository.save`, which
 deliberately does not commit — it enlists in the caller's transaction), and
 `shared/notification_shared/publisher.py` (`OutboxPublisher`, the poll loop that reads pending
-rows, calls `XADD`, and marks them published — identical across all four services). Each service
+rows, calls `XADD`, and marks them published — identical in every service with an outbox: notification, routing, email and telegram). Each service
 materializes its own `outbox` table from `OutboxMixin` (`shared/notification_shared/models.py`),
 per ADR 0012.
 
@@ -99,7 +101,7 @@ receives that event.
 
 **Where it lives.** `RedisStreamConsumer.ensure_group` in `shared/notification_shared/streams.py`.
 
-**What breaks without it — the first-boot race.** Under `docker compose up`, all four services
+**What breaks without it — the first-boot race.** Under `docker compose up`, all the services
 start concurrently. If groups were created at `$` (only new messages from this point forward), a
 notification-service that publishes `notification.created` a few milliseconds before
 routing-service has finished creating its `routing-service` group would lose that event

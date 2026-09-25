@@ -1,3 +1,5 @@
+**English** | [Italiano](README.it.md)
+
 # email-service
 
 Delivers email notifications. Simulated by default; real delivery through generic SMTP when
@@ -43,7 +45,7 @@ There is no random failure rate — see "Delivery" below for the exact rule orde
 | `PENDING_MAX_RETRIES` | `3` | Recovery attempts before `give_up` |
 | `RECOVERY_POLL_INTERVAL_MS` | `5000` | Recovery sweep interval |
 | `DELIVERY_LATENCY_MS_MAX` | `500` | Upper bound of the simulated random delivery delay |
-| `HTTP_TIMEOUT_SECONDS` | `5.0` | SMTP connect timeout, reused rather than a separate variable |
+| `HTTP_TIMEOUT_SECONDS` | `5.0` | Timeout of every SMTP operation, reused rather than a separate variable |
 | `SMTP_HOST` | unset | Empty means simulated delivery; set switches on `SmtpSender` |
 | `SMTP_PORT` | `587` | |
 | `SMTP_USERNAME` | unset | Unset means no authentication |

@@ -1,3 +1,5 @@
+**English** | [Italiano](local-development.it.md)
+
 # Local Development
 
 ## uv workspace

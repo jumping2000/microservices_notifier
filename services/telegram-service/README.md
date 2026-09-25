@@ -1,3 +1,5 @@
+**English** | [Italiano](README.it.md)
+
 # telegram-service
 
 Delivers Telegram notifications. Simulated by default; real delivery through the Telegram Bot API

@@ -1,7 +1,10 @@
+**English** | [Italiano](README.it.md)
+
 # notification-service
 
-Owns the notification aggregate: what was requested, and its current status. It is the only
-client-facing entry point in slice 1 and the only service whose read model the client ever polls.
+Owns the notification aggregate: what was requested, and its current status. Clients reach it
+through the Gateway's `/api/v1/notifications` routes, and it is the only service whose read model
+the client ever polls.
 
 ## Tables
 

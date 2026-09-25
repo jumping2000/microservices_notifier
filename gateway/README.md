@@ -1,3 +1,5 @@
+**English** | [Italiano](README.it.md)
+
 # gateway
 
 The platform's single client entry point: a thin FastAPI reverse proxy over notification-service
