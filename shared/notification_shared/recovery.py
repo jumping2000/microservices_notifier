@@ -99,6 +99,7 @@ class PendingRecoverer:
         self, stream: str, group: str, consumer: RecoverableConsumer, message: ClaimedMessage
     ) -> bool:
         """Returns True when the entry should be acked."""
+        set_correlation_id(None)
         if message.envelope is None:
             logger.error(
                 "unparseable stream entry %s, acking and discarding",

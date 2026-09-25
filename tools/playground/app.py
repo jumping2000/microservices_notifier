@@ -139,7 +139,7 @@ def sidebar(modes: dict[str, str]) -> None:
 
 def send_panel(modes: dict[str, str]) -> None:
     st.subheader("Send a notification")
-    with st.form("send"):
+    with st.form("send", clear_on_submit=True):
         channel = st.selectbox("Channel", ["email", "telegram"])
         recipient = st.text_input(
             "Recipient (email address or Telegram chat id)", "john@example.com"
