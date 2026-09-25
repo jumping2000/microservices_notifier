@@ -3,10 +3,8 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
 WORKDIR /app
 COPY pyproject.toml uv.lock .python-version ./
 COPY shared/ ./shared/
-# The root workspace names gateway explicitly; uv needs its manifest to resolve.
-COPY gateway/pyproject.toml ./gateway/pyproject.toml
-COPY services/routing-service/ ./services/routing-service/
-RUN uv sync --frozen --no-dev --no-editable --package routing-service
+COPY gateway/ ./gateway/
+RUN uv sync --frozen --no-dev --no-editable --package gateway
 
 FROM python:3.14-slim AS runtime
 RUN adduser --disabled-password appuser && apt-get update \
@@ -14,7 +12,7 @@ RUN adduser --disabled-password appuser && apt-get update \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=builder --chown=appuser /app/.venv /app/.venv
-COPY --chown=appuser services/routing-service/ /app/
+COPY --chown=appuser gateway/ /app/
 RUN chmod +x /app/entrypoint.sh
 USER appuser
 EXPOSE 8000

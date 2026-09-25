@@ -3,6 +3,8 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
 WORKDIR /app
 COPY pyproject.toml uv.lock .python-version ./
 COPY shared/ ./shared/
+# The root workspace names gateway explicitly; uv needs its manifest to resolve.
+COPY gateway/pyproject.toml ./gateway/pyproject.toml
 COPY services/telegram-service/ ./services/telegram-service/
 RUN uv sync --frozen --no-dev --no-editable --package telegram-service
 
