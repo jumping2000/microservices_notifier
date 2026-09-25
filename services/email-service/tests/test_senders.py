@@ -203,6 +203,12 @@ def test_smtp_security_only_accepts_the_three_modes():
         _settings(smtp_security="tls")
 
 
+def test_the_smtp_password_never_appears_in_a_startup_validation_error():
+    with pytest.raises(ValidationError) as exc_info:
+        _settings(smtp_host="h", smtp_password="hunter2-SECRET")
+    assert "hunter2-SECRET" not in str(exc_info.value)
+
+
 async def test_version_reports_the_delivery_mode():
     settings = _settings(smtp_host="smtp.real-domain.org", smtp_from="p@real-domain.org")
     app = create_app(settings)
