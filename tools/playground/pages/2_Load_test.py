@@ -68,7 +68,9 @@ st.caption(
 )
 st.info(
     "In compose each consumer group has one consumer and simulated delivery sleeps up to 2 s, "
-    "so throughput reflects those deliberate limits, not the code's ceiling."
+    "so throughput reflects those deliberate limits, not the code's ceiling. A large run needs "
+    "a settle timeout of roughly (email share × total × 2 s), so unsettled entries at a short "
+    'timeout mean "still queued", not "lost".'
 )
 
 with st.form("loadtest"):
@@ -76,7 +78,7 @@ with st.form("loadtest"):
     concurrency = st.number_input("Concurrency", min_value=1, max_value=MAX_CONCURRENCY, value=10)
     telegram_ratio = st.slider("Telegram share", 0.0, 1.0, 0.3, 0.05)
     fail_ratio = st.slider("Failing share", 0.0, 1.0, 0.1, 0.05)
-    settle_timeout = st.number_input("Settle timeout (s)", min_value=10, max_value=600, value=120)
+    settle_timeout = st.number_input("Settle timeout (s)", min_value=10, max_value=600, value=300)
     run = st.form_submit_button("Run")
 
 if run:
