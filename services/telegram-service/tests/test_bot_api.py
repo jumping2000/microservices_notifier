@@ -102,6 +102,16 @@ async def test_the_token_never_reaches_logs_or_exception_text(caplog):
     assert TOKEN not in caplog.text
 
 
+def test_constructing_a_sender_silences_httpx_and_httpcore_logs():
+    logging.getLogger("httpx").setLevel(logging.NOTSET)
+    logging.getLogger("httpcore").setLevel(logging.NOTSET)
+
+    _sender(FakeBotApi())
+
+    assert logging.getLogger("httpx").level == logging.WARNING
+    assert logging.getLogger("httpcore").level == logging.WARNING
+
+
 def test_a_token_means_bot_api():
     settings = Settings(database_url=DB_URL, telegram_bot_token=TOKEN, _env_file=None)
     assert isinstance(build_sender(settings), BotApiSender)
