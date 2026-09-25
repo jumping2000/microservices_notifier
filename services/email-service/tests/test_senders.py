@@ -118,6 +118,12 @@ async def test_a_missing_subject_uses_the_default(smtp_server):
     assert handler.messages[0]["Subject"] == DEFAULT_SUBJECT == "Notification"
 
 
+async def test_a_crlf_subject_is_flattened_to_a_single_line(smtp_server):
+    controller, handler = smtp_server
+    await _sender(controller).send("someone@real-domain.org", "Line one\r\nLine two", "Hello!")
+    assert handler.messages[0]["Subject"] == "Line one Line two"
+
+
 async def test_a_5xx_refusal_is_permanent(smtp_server):
     controller, _ = smtp_server
     with pytest.raises(EmailRejectedError):

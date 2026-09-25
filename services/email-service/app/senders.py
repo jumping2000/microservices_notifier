@@ -75,7 +75,8 @@ class SmtpSender:
         message = EmailMessage()
         message["From"] = self._from
         message["To"] = recipient
-        message["Subject"] = subject or DEFAULT_SUBJECT
+        flat_subject = " ".join((subject or DEFAULT_SUBJECT).splitlines())
+        message["Subject"] = flat_subject
         message.set_content(body)
         logger.info("sending email to %s via SMTP", recipient)
         try:
